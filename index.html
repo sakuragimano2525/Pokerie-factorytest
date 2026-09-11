@@ -1,0 +1,1532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>ポケリエ バトルファクトリー</title>
+<link rel="manifest" href="manifest.json">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800;900&family=Zen+Maru+Gothic:wght@500;700;900&display=swap');
+
+:root{
+  --bg-0:#e6e9ef;
+  --bg-1:#dde1e8;
+  --surface:#e3e7ee;
+  --surface-deep:#d7dbe3;
+  --ink:#33394a;
+  --ink-soft:#6b7386;
+  --accent-a:#5b8cff;
+  --accent-b:#8b6bff;
+  --accent-hp:#4fd67a;
+  --accent-hp-mid:#f5c542;
+  --accent-hp-low:#ff5d5d;
+  --shadow-light: 8px 8px 16px rgba(163,169,184,0.55), -8px -8px 16px rgba(255,255,255,0.85);
+  --shadow-light-sm: 4px 4px 8px rgba(163,169,184,0.5), -4px -4px 8px rgba(255,255,255,0.8);
+  --shadow-inset: inset 5px 5px 10px rgba(163,169,184,0.5), inset -5px -5px 10px rgba(255,255,255,0.75);
+  --shadow-inset-sm: inset 3px 3px 6px rgba(163,169,184,0.5), inset -3px -3px 6px rgba(255,255,255,0.75);
+  --radius-lg: 28px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+  --font-main: 'M PLUS Rounded 1c', 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN', sans-serif;
+}
+
+*{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html,body{
+  margin:0; padding:0; width:100%; height:100%;
+  background: var(--bg-0);
+  font-family: var(--font-main);
+  color: var(--ink);
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  user-select: none;
+}
+#app{
+  position:fixed; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+
+.screen{
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; pointer-events:none;
+  transition: opacity .35s ease;
+}
+.screen.active{ opacity:1; pointer-events:auto; }
+
+#rotate-hint{
+  position:fixed; inset:0; z-index:9999;
+  background: var(--bg-0);
+  display:none;
+  flex-direction:column; align-items:center; justify-content:center; gap:18px;
+  text-align:center; padding:24px;
+  cursor:pointer;
+}
+#rotate-hint.show{ display:flex; }
+.rotate-icon{
+  width:90px; height:90px; border-radius: var(--radius-md);
+  background: var(--surface); box-shadow: var(--shadow-light);
+  display:flex; align-items:center; justify-content:center;
+  font-size:44px;
+  animation: rotatePulse 1.6s ease-in-out infinite;
+}
+@keyframes rotatePulse{
+  0%,100%{ transform:rotate(0deg); }
+  50%{ transform:rotate(90deg); }
+}
+#rotate-hint p{ font-weight:700; color:var(--ink-soft); margin:0; font-size:15px; }
+
+/* ================= TITLE SCREEN ================= */
+#screen-title{
+  flex-direction:column; gap:28px;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(91,140,255,0.18), transparent 55%),
+    radial-gradient(circle at 80% 75%, rgba(139,107,255,0.16), transparent 55%),
+    var(--bg-0);
+}
+.title-card{
+  padding: 40px 56px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  text-align:center;
+  max-width: 90vw;
+}
+.title-logo{
+  font-size: clamp(28px, 5vw, 48px);
+  font-weight:900;
+  letter-spacing: 2px;
+  margin:0 0 6px;
+  background: linear-gradient(120deg, var(--accent-a), var(--accent-b));
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.title-sub{
+  margin:0; color: var(--ink-soft); font-weight:700; font-size: clamp(12px,1.8vw,15px);
+  letter-spacing:3px;
+}
+.tap-instruction{
+  margin-top:22px; font-size:13px; color: var(--ink-soft); font-weight:700;
+  opacity:0.8;
+  animation: fadeBlink 2s ease-in-out infinite;
+}
+@keyframes fadeBlink{ 0%,100%{opacity:.35;} 50%{opacity:.9;} }
+
+.neu-btn{
+  font-family: var(--font-main);
+  border:none; cursor:pointer;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight:800;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-light);
+  transition: box-shadow .12s ease, transform .12s ease;
+  -webkit-user-select:none;
+}
+.neu-btn:active{
+  box-shadow: var(--shadow-inset);
+  transform: scale(0.98);
+}
+.neu-btn.primary{
+  background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  color:#fff;
+}
+.neu-btn.primary:active{
+  box-shadow: inset 4px 4px 10px rgba(0,0,0,0.25), inset -4px -4px 10px rgba(255,255,255,0.15);
+}
+.start-btn{
+  margin-top:26px;
+  padding: 16px 52px;
+  font-size: 18px;
+  border-radius: 999px;
+}
+
+/* ---- Title menu (2 buttons: NPC / Player) ---- */
+.title-menu-row{
+  display:flex;
+  gap: 18px;
+  margin-top: 26px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.title-menu-btn{
+  padding: 20px 32px;
+  min-width: 180px;
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  border-radius: var(--radius-md);
+}
+.title-menu-btn .tmb-title{ font-size: 16px; font-weight: 900; }
+.title-menu-btn .tmb-sub{ font-size: 11px; font-weight: 700; opacity: 0.75; }
+.title-menu-btn.primary .tmb-sub{ color: #fff; opacity: 0.85; }
+
+/* ================= MULTIPLAYER MENU ================= */
+#screen-multiplayer{
+  flex-direction: column;
+  gap: 24px;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 25% 30%, rgba(91,140,255,0.14), transparent 55%),
+    radial-gradient(circle at 75% 70%, rgba(139,107,255,0.14), transparent 55%),
+    var(--bg-0);
+}
+.multi-menu-title{
+  font-weight: 900;
+  font-size: clamp(18px, 2.6vw, 24px);
+  color: var(--ink);
+  margin: 0;
+  letter-spacing: 2px;
+}
+.multi-menu-row{
+  display:flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.multi-menu-btn{
+  width: 230px;
+  height: 190px;
+  border-radius: var(--radius-lg);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap: 10px;
+  padding: 16px;
+}
+.multi-menu-btn .mmb-icon{ font-size: 42px; line-height: 1; }
+.multi-menu-btn .mmb-title{ font-size: 17px; font-weight: 900; }
+.multi-menu-btn .mmb-sub{ font-size: 11px; font-weight: 700; color: var(--ink-soft); }
+.multi-menu-btn.primary .mmb-sub{ color: #fff; opacity: 0.85; }
+.multi-menu-back{
+  margin-top: 6px;
+  padding: 10px 32px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+/* ================= HOST WAITING ================= */
+#screen-host-waiting{
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(91,140,255,0.15), transparent 60%),
+    var(--bg-0);
+}
+.host-wait-card{
+  padding: 30px 44px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  max-width: 90vw;
+}
+.host-wait-title{
+  font-weight: 900;
+  font-size: 16px;
+  color: var(--ink);
+  margin: 0;
+}
+.host-room-id-label{
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--ink-soft);
+  letter-spacing: 2px;
+}
+.host-room-id{
+  font-size: clamp(40px, 7vw, 64px);
+  font-weight: 900;
+  letter-spacing: 10px;
+  color: var(--accent-a);
+  padding: 12px 26px 12px 36px;
+  border-radius: var(--radius-md);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.host-wait-player-name{
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink);
+  margin: 0;
+}
+.host-wait-hint{
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  margin: 0;
+}
+.host-wait-spinner{
+  width: 38px; height: 38px;
+  border: 4px solid var(--surface-deep);
+  border-top-color: var(--accent-a);
+  border-radius: 50%;
+  animation: hostSpin 1s linear infinite;
+  margin-top: 4px;
+}
+@keyframes hostSpin{ to { transform: rotate(360deg); } }
+.host-wait-cancel{
+  padding: 10px 34px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+/* ================= MULTIPLAYER MODAL (name / join) ================= */
+.multi-modal-overlay{
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(20,22,30,0.55);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s ease;
+  padding: 16px;
+}
+.multi-modal-overlay.show{ opacity: 1; pointer-events: auto; }
+.multi-modal-card{
+  width: min(92%, 400px);
+  padding: 24px 26px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.multi-modal-title{
+  font-weight: 900; font-size: 16px; color: var(--ink);
+  margin: 0; text-align: center;
+}
+.multi-input-label{
+  display: block;
+  font-size: 11.5px; font-weight: 800; color: var(--ink-soft);
+  margin-bottom: 5px;
+  letter-spacing: 1px;
+}
+.multi-input{
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  font-family: var(--font-main);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.multi-input::placeholder{ color: var(--ink-soft); opacity: 0.55; font-weight: 700; }
+.multi-input:focus{ box-shadow: var(--shadow-inset-sm), 0 0 0 2px rgba(91,140,255,0.4); }
+.multi-input-hint{
+  font-size: 10.5px; color: var(--ink-soft); font-weight: 700;
+  text-align: right; margin-top: 3px;
+}
+.multi-input-hint.warn{ color: var(--accent-hp-low); }
+.multi-modal-btn-row{
+  display: flex; gap: 10px; justify-content: center; margin-top: 4px;
+}
+.multi-modal-btn{ padding: 10px 28px; border-radius: 999px; font-size: 14px; }
+
+/* ================= TEAM REVEAL SCREEN ================= */
+#screen-team{
+  flex-direction:column; gap:8px; padding: 10px 20px;
+}
+.team-title{ font-weight:900; font-size: clamp(16px,2.2vw,22px); color:var(--ink); margin:0 0 4px; }
+.team-cards{ display:flex; gap: 18px; flex-wrap:wrap; justify-content:center; max-width: 92vw; }
+.team-poke-card{
+  width: 148px; padding: 14px 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  text-align:center;
+}
+.team-poke-card img{
+  width:84px; height:84px; object-fit:contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(2px 3px 3px rgba(0,0,0,0.18));
+}
+.team-poke-card .tpc-noimg{
+  width:84px; height:84px; margin:0 auto;
+  border-radius:50%;
+  background: var(--surface-deep); box-shadow: var(--shadow-inset-sm);
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; color:var(--ink-soft); font-weight:700;
+}
+.team-poke-card .tpc-name{ font-weight:800; font-size:13px; margin-top:8px; }
+.team-poke-card .tpc-types{ display:flex; gap:4px; justify-content:center; margin-top:6px; flex-wrap:wrap; }
+.type-chip{
+  font-size:9.5px; font-weight:800; padding:3px 8px; border-radius:999px; color:#fff;
+  box-shadow: 1px 1px 3px rgba(0,0,0,0.18);
+  white-space:nowrap;
+}
+.team-poke-card .tpc-moves{ margin-top:8px; font-size:9.5px; color:var(--ink-soft); line-height:1.5; text-align:left; }
+
+/* ================= BATTLE SCREEN ================= */
+#screen-battle{
+  width:100%; height:100%;
+}
+.battle-field{
+  position:relative;
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(139,107,255,0.10), transparent 60%),
+    linear-gradient(180deg, #cfd6e4 0%, #dfe3ea 42%, #e9ecf1 100%);
+}
+.field-floor{
+  position:absolute; left:0; right:0; bottom:0; height:38%;
+  background: linear-gradient(180deg, #c3cadb, #aab2c7);
+  border-top: 3px solid rgba(255,255,255,0.5);
+}
+.field-floor::before{
+  content:''; position:absolute; inset:0;
+  background: repeating-linear-gradient(90deg, rgba(255,255,255,0.12) 0 2px, transparent 2px 46px);
+}
+.poke-platform{
+  position:absolute;
+  width: 150px; height: 38px;
+  border-radius:50%;
+  background: rgba(120,128,150,0.35);
+  filter: blur(1px);
+  box-shadow: 0 0 0 6px rgba(255,255,255,0.15) inset;
+}
+.plat-opp{ top: 30%; right: 16%; transform: translate(50%,-50%) scale(0.9); }
+.plat-self{ top: 84%; left: 16%; transform: translate(-50%,-50%) scale(1.55); }
+
+.battler-row{
+  position:absolute;
+  display:flex;
+  align-items:center;
+  gap: 14px;
+}
+.row-opp{
+  top: 4%;
+  right: 10%;
+  flex-direction: row;
+  align-items: flex-start;
+}
+.row-self{
+  bottom: 2%;
+  left: 2%;
+  flex-direction: row;
+}
+
+.sprite-slot{
+  position:relative;
+  width: 150px; height: 150px;
+  flex: none;
+  display:flex; align-items:center; justify-content:center;
+}
+.row-opp .sprite-slot{ width:120px; height:120px; }
+.row-self .sprite-slot{ width:210px; height:210px; }
+
+.sprite{
+  position:relative;
+  width: 128px; height:128px;
+  object-fit:contain;
+  image-rendering: pixelated;
+  transition: transform .25s ease, opacity .25s ease, filter .2s ease;
+  filter: drop-shadow(3px 6px 4px rgba(0,0,0,0.25));
+}
+.sprite.sprite-opp{ width:118px; height:118px; }
+.sprite.sprite-self{ width:220px; height:220px; transform: scaleX(-1); }
+.sprite.hit{ filter: brightness(2.4) drop-shadow(3px 6px 4px rgba(0,0,0,0.25)); }
+/* 能力ランク変化エフェクト（DP風：上昇=赤フラッシュ／下降=青フラッシュ）。
+   スプライトと同じ画像をマスクにして輪郭に沿って光らせる。
+   位置・サイズは表示中のimg要素の実測値からJS側で正確に指定するため、
+   ここではアニメーションと合成方法のみを定義する（widthやtransformは指定しない）。 */
+.rank-fx-overlay{
+  pointer-events:none;
+  -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
+  -webkit-mask-position:center; mask-position:center;
+  -webkit-mask-size:contain; mask-size:contain;
+  image-rendering: pixelated;
+  opacity:0;
+  mix-blend-mode: screen;
+}
+.rank-fx-overlay.rank-fx-up{ background:#ff3232; animation: rankFxFlash .5s ease-out; }
+.rank-fx-overlay.rank-fx-down{ background:#3272ff; animation: rankFxFlash .5s ease-out; }
+@keyframes rankFxFlash{
+  0%{ opacity:0; }
+  12%{ opacity:0.9; }
+  30%{ opacity:0.35; }
+  50%{ opacity:0.85; }
+  100%{ opacity:0; }
+}
+.sprite.faint{ opacity:0; transform: translateY(40px) scale(0.7) !important; }
+.sprite.sprite-self.faint{ transform: translateY(40px) scale(0.7) scaleX(-1) !important; }
+.sprite.enter-opp{ animation: enterFromRight .5s ease; }
+.sprite.enter-self{ animation: enterFromLeftFlipped .5s ease; }
+@keyframes enterFromRight{ from{ transform: translateX(140%); opacity:0;} to{ transform: translateX(0); opacity:1;} }
+@keyframes enterFromLeftFlipped{ from{ transform: translateX(-140%) scaleX(-1); opacity:0;} to{ transform: translateX(0) scaleX(-1); opacity:1;} }
+
+/* ---- タイプ技 簡易エフェクト（sprite-slotは position:relative 済み） ---- */
+.type-fx{
+  position:absolute;
+  top:50%; left:50%;
+  transform: translate(-50%, -50%) scale(0.4);
+  font-size: 64px;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+  animation: typeFxPop 0.42s ease-out forwards;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.35));
+}
+@keyframes typeFxPop{
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+  30%  { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+  70%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.3); }
+}
+/* タイプごとの色味づけ（背景グロー）。絵文字自体の色は変えず、後光の色で属性感を出す */
+.type-fx.tfx-bug{ text-shadow: 0 0 18px rgba(160,200,60,0.9); }
+.type-fx.tfx-dark{ text-shadow: 0 0 18px rgba(90,70,120,0.9); }
+.type-fx.tfx-dragon{ text-shadow: 0 0 18px rgba(90,110,230,0.9); }
+.type-fx.tfx-electric{ text-shadow: 0 0 18px rgba(250,210,40,0.95); }
+.type-fx.tfx-fairy{ text-shadow: 0 0 18px rgba(240,150,220,0.9); }
+.type-fx.tfx-fighting{ text-shadow: 0 0 18px rgba(210,90,50,0.9); }
+.type-fx.tfx-fire{ text-shadow: 0 0 18px rgba(255,110,40,0.95); }
+.type-fx.tfx-flying{ text-shadow: 0 0 18px rgba(150,190,240,0.9); }
+.type-fx.tfx-ghost{ text-shadow: 0 0 18px rgba(120,90,160,0.9); }
+.type-fx.tfx-grass{ text-shadow: 0 0 18px rgba(90,200,90,0.9); }
+.type-fx.tfx-ground{ text-shadow: 0 0 18px rgba(200,160,90,0.9); }
+.type-fx.tfx-ice{ text-shadow: 0 0 18px rgba(140,220,240,0.95); }
+.type-fx.tfx-normal{ text-shadow: 0 0 18px rgba(210,210,190,0.9); }
+.type-fx.tfx-poison{ text-shadow: 0 0 18px rgba(160,80,180,0.9); }
+.type-fx.tfx-psychic{ text-shadow: 0 0 18px rgba(230,90,150,0.9); }
+.type-fx.tfx-rock{ text-shadow: 0 0 18px rgba(180,150,100,0.9); }
+.type-fx.tfx-steel{ text-shadow: 0 0 18px rgba(170,190,200,0.95); }
+.type-fx.tfx-water{ text-shadow: 0 0 18px rgba(60,140,230,0.95); }
+.type-fx.tfx-sound{ text-shadow: 0 0 18px rgba(230,150,60,0.9); }
+.type-fx.tfx-shine{ text-shadow: 0 0 18px rgba(255,230,120,0.95); }
+
+.sprite-fallback{
+  position:relative;
+  border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-weight:900; color:#fff; text-shadow: 0 2px 3px rgba(0,0,0,0.25);
+}
+
+.hud{
+  flex: none;
+  padding: 10px 16px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-light-sm);
+  width: 190px;
+}
+.hud-self{ width: 210px; }
+.hud-name-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.hud-name{ font-weight:900; font-size:13.5px; color:var(--ink); }
+.hud-lv{ font-size:11px; font-weight:800; color:var(--ink-soft); }
+.hud-hpbar-outer{
+  margin-top:6px; height:9px; border-radius:999px;
+  background: var(--surface-deep); box-shadow: var(--shadow-inset-sm);
+  overflow:hidden;
+}
+.hud-hpbar-inner{
+  height:100%; border-radius:999px;
+  background: var(--accent-hp);
+  transition: width .4s ease, background-color .3s ease;
+}
+.hud-hp-text{ margin-top:4px; font-size:10.5px; font-weight:800; color:var(--ink-soft); text-align:right; }
+.hud-hp-percent{ margin-top:4px; font-size:10.5px; font-weight:800; color:var(--ink-soft); text-align:right; }
+.hud-status-chip{
+  display:inline-block; margin-top:5px; margin-right:4px; font-size:9.5px; font-weight:900; color:#fff;
+  padding:2px 8px; border-radius:999px; background:#c77b2e;
+  box-shadow: 1px 1px 2px rgba(0,0,0,0.2);
+}
+.hud-status-chip.status-1, .pli-status-tag.status-1{ background:#f0c53d; color:#4a3a00; }
+.hud-status-chip.status-2, .pli-status-tag.status-2{ background:#ee6c4d; }
+.hud-status-chip.status-3, .pli-status-tag.status-3{ background:#9b59b6; }
+.hud-status-chip.status-4, .pli-status-tag.status-4{ background:#7d3c98; }
+.hud-status-chip.status-5, .pli-status-tag.status-5{ background:#8b8b8b; }
+.hud-status-chip.status-7, .pli-status-tag.status-7{ background:#5dc7e0; color:#063a44; }
+.hud-status-chip.status-confuse, .pli-status-tag.status-confuse{ background:#e26fc7; color:#3a0a30; }
+
+.battle-bottom{
+  position: absolute;
+  right: 0; bottom: 0;
+  z-index: 5;
+  display:flex; flex-direction:column; align-items:flex-end;
+  gap: 8px;
+  padding: 0 14px calc(14px + env(safe-area-inset-bottom)) 0;
+  pointer-events: none;
+}
+.battle-bottom > *{ pointer-events: auto; }
+
+.msg-toast{
+  position: absolute;
+  left: 50%; top: 50%;
+  max-width: min(560px, 82%);
+  z-index: 6;
+  border-radius: var(--radius-md);
+  background: rgba(20,22,30,0.62);
+  backdrop-filter: blur(2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  padding: 14px 26px;
+  font-size: 15px; font-weight:800; line-height:1.5;
+  color: #fff;
+  text-align: center;
+  opacity: 0; transform: translate(-50%,-50%) scale(0.97);
+  transition: opacity .18s ease, transform .18s ease;
+  pointer-events: none;
+}
+.msg-toast.show{ opacity:1; transform: translate(-50%,-50%) scale(1); pointer-events:auto; cursor:pointer; }
+.msg-line{ white-space:pre-wrap; }
+
+.battle-log-stack{
+  position:absolute;
+  left:14px; top:12px;
+  z-index:6;
+  display:flex; flex-direction:column;
+  gap:5px;
+  max-width: min(340px, 60%);
+  pointer-events:none;
+}
+.battle-log-line{
+  background: rgba(20,22,30,0.62);
+  backdrop-filter: blur(2px);
+  color:#fff;
+  font-size:11.5px; font-weight:700; line-height:1.35;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+  opacity:0; transform: translateY(-6px);
+  animation: logLineIn .16s ease forwards;
+  white-space: pre-line;
+}
+@keyframes logLineIn{ from{ opacity:0; transform:translateY(-6px);} to{ opacity:1; transform:translateY(0);} }
+.battle-log-line.leaving{ animation: logLineOut .14s ease forwards; }
+@keyframes logLineOut{ from{ opacity:1; transform:translateY(0);} to{ opacity:0; transform:translateY(-6px);} }
+
+.watch-overlay{
+  position:absolute; inset:0; z-index:30;
+  background: rgba(20,22,30,0.55);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap: 14px;
+  opacity:0; pointer-events:none;
+  transition: opacity .2s ease;
+}
+.watch-overlay.show{ opacity:1; pointer-events:auto; }
+.watch-panel{
+  width: min(94%, 760px);
+  height: min(88%, 360px);
+  display:flex;
+  border-radius: var(--radius-lg);
+  overflow:hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+}
+.watch-close-btn{
+  padding: 9px 30px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.log-overlay{
+  position:absolute; inset:0; z-index:30;
+  background: rgba(20,22,30,0.55);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap: 14px;
+  opacity:0; pointer-events:none;
+  transition: opacity .2s ease;
+}
+.log-overlay.show{ opacity:1; pointer-events:auto; }
+.log-panel{
+  width: min(94%, 760px);
+  height: min(88%, 460px);
+  display:flex; flex-direction:column;
+  border-radius: var(--radius-lg);
+  overflow:hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+}
+.log-panel-title{
+  padding: 12px 16px;
+  font-size: 13.5px;
+  font-weight: 800;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  flex: 0 0 auto;
+}
+.log-panel-list{
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display:flex; flex-direction:column;
+  padding: 10px 12px;
+  gap: 6px;
+}
+.log-turn-divider{
+  align-self:center;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: var(--muted);
+  padding: 2px 0 2px;
+  margin-top: 4px;
+}
+.log-entry{
+  display:flex; align-items:center; gap: 8px;
+  border-radius: 999px;
+  padding: 6px 12px 6px 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color:#fff;
+}
+.log-entry.side-player{ background: #3d7bd6; align-self:flex-start; }
+.log-entry.side-cpu{ background: rgba(214,64,69,0.85); align-self:flex-start; }
+.log-entry.kind-plain{ background: rgba(80,84,100,0.55); align-self:center; color:#fff; }
+.log-entry-icon{
+  width: 26px; height: 26px; border-radius:50%;
+  object-fit: contain; background: rgba(255,255,255,0.25);
+  flex: 0 0 auto;
+}
+.log-entry-text{ line-height:1.3; }
+.log-entry-tag{
+  font-size: 10.5px; font-weight: 800; opacity: 0.85; margin-right: 4px;
+}
+.log-panel-empty{
+  align-self:center; color: var(--muted); font-size: 12.5px; padding: 20px;
+}
+
+.watch-side-list{
+  flex: 0 0 30%;
+  display:flex; flex-direction:column; gap:8px;
+  padding: 14px;
+  overflow-y:auto;
+  background: var(--surface-deep);
+}
+.watch-side-item{
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-light-sm);
+  display:flex; align-items:center; gap:10px;
+  text-align:left;
+  cursor:pointer;
+  border: 2px solid transparent;
+  font-family: var(--font-main);
+}
+.watch-side-item.active{ border-color: var(--accent-a); }
+.wsi-icon{
+  width:40px; height:40px; flex:none; border-radius:50%;
+  background: var(--surface-deep); box-shadow: var(--shadow-inset-sm);
+  display:flex; align-items:center; justify-content:center;
+  font-size:10px; font-weight:800; color:var(--ink-soft);
+  object-fit:contain; image-rendering:pixelated;
+}
+.wsi-info{ flex:1; min-width:0; }
+.wsi-tag{ font-size:9.5px; font-weight:900; color:var(--accent-a); }
+.wsi-name{ font-weight:800; font-size:13px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wsi-hpbar-outer{ margin-top:4px; height:6px; border-radius:999px; background:var(--surface-deep); box-shadow:var(--shadow-inset-sm); overflow:hidden; }
+.wsi-hpbar-inner{ height:100%; border-radius:999px; background:var(--accent-hp); }
+
+.watch-detail{
+  flex: 1;
+  min-width:0;
+  padding: 16px 18px;
+  overflow:hidden;
+  display:flex; flex-direction:column; gap:8px;
+}
+.watch-detail-header{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+.watch-detail-name{ font-size:16px; font-weight:900; color:var(--ink); }
+.watch-detail-lv{ font-size:11px; font-weight:800; color:var(--ink-soft); }
+.watch-detail-status-badge{
+  font-size:10.5px; font-weight:800; color:#fff;
+  padding: 2px 9px; border-radius:999px;
+  background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+}
+.watch-detail-types{ display:flex; gap:6px; }
+.watch-type-chip{
+  display:inline-flex; align-items:center; gap:4px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 999px;
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+}
+.watch-type-chip img{ width:16px; height:16px; object-fit:contain; }
+.watch-type-name{ font-size:10.5px; font-weight:800; color:var(--ink); }
+.watch-detail-hpbar-outer{ height:8px; border-radius:999px; background:var(--surface-deep); box-shadow:var(--shadow-inset-sm); overflow:hidden; }
+.watch-detail-hpbar-inner{ height:100%; border-radius:999px; background:var(--accent-hp); transition: width .25s ease, background .25s ease; }
+.watch-detail-hp-text{ font-size:10.5px; font-weight:700; color:var(--ink-soft); margin-top:-4px; }
+.watch-section-title{ font-size:11px; font-weight:800; color:var(--ink-soft); margin: 4px 0 -2px; }
+.watch-ranks{ display:flex; flex-direction:column; gap:4px; }
+.watch-rank-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:var(--ink); }
+.watch-rank-name{ color:var(--ink-soft); }
+.watch-rank-arrows{ font-weight:900; letter-spacing:1px; }
+.watch-rank-arrows.up{ color:var(--accent-hp); }
+.watch-rank-arrows.down{ color:var(--accent-hp-low); }
+.watch-rank-arrows .dim{ opacity:0.25; }
+.watch-empty{ font-size:11px; color:var(--ink-soft); font-weight:600; }
+
+.watch-lower{
+  flex:1;
+  min-height:0;
+  display:flex;
+  gap:12px;
+  overflow:hidden;
+}
+.watch-lower-col{
+  flex:1;
+  min-width:0;
+  display:flex; flex-direction:column; gap:4px;
+  overflow:hidden;
+}
+.watch-lower-divider{
+  flex:0 0 1px;
+  align-self:stretch;
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+}
+
+.watch-status-row{
+  display:flex; flex-direction:column; gap:6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  overflow-y:auto;
+}
+.watch-status-chip{
+  font-size:11px; font-weight:800; color:#fff;
+  padding: 4px 10px; border-radius:999px;
+  background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  box-shadow: 1px 1px 3px rgba(0,0,0,0.18);
+  white-space:nowrap;
+  align-self:flex-start;
+}
+
+.cmd-dock{
+  width: 230px;
+  display:flex; flex-direction:column; gap: 8px;
+  transition: width .18s ease;
+}
+.cmd-dock.dock-wide{ width: 320px; }
+.dock-watch-btn{
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight:800;
+  padding: 9px 14px;
+  align-self: flex-end;
+  box-shadow: var(--shadow-light-sm);
+}
+.dock-watch-btn:disabled{ opacity:0.45; box-shadow: var(--shadow-inset-sm); cursor:not-allowed; }
+.dock-watch-btn.hide-when-acting{ display:none; }
+.dock-log-btn{
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight:800;
+  padding: 9px 14px;
+  align-self: flex-end;
+  box-shadow: var(--shadow-light-sm);
+}
+.dock-log-btn.hide-when-acting{ display:none; }
+
+.cmd-panel{
+  display:grid;
+  gap: 10px;
+  min-height:0;
+}
+
+.cmd-btn{
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  font-weight:900;
+  padding: 18px 10px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:2px;
+  line-height:1.25;
+}
+.cmd-btn .cb-sub{ font-size:9.5px; font-weight:700; color:var(--ink-soft); }
+.cmd-btn:disabled{ opacity:0.4; box-shadow: var(--shadow-inset-sm); cursor:not-allowed; }
+
+.action-menu{
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+.action-menu .cmd-btn{
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  font-size: 15px;
+}
+
+.move-list{
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(4, 1fr) 0.6fr;
+  width: 320px;
+}
+.move-row{
+  flex-direction: row !important;
+  align-items:center;
+  justify-content: flex-start !important;
+  gap: 12px;
+  padding: 0 18px 0 16px;
+  text-align: left;
+  font-size: 17px;
+  border-left: 8px solid transparent;
+}
+.move-row-type-icon{
+  flex: none;
+  width: 26px; height: 26px;
+  object-fit: contain;
+}
+.move-row-name{ flex:1; text-align:left; }
+.move-row-pp{ flex:none; font-size:12px; font-weight:700; color:var(--ink-soft); }
+.move-row-back{
+  font-size: 14px;
+  font-weight:800;
+  color: var(--ink-soft);
+}
+
+.t-bug-edge{ border-left-color:#8fbb2e; } .t-dark-edge{ border-left-color:#5a5366; }
+.t-dragon-edge{ border-left-color:#7161e0; } .t-electric-edge{ border-left-color:#e8c832; }
+.t-fairy-edge{ border-left-color:#ee9bd0; } .t-fighting-edge{ border-left-color:#c0432c; }
+.t-fire-edge{ border-left-color:#f0812e; } .t-flying-edge{ border-left-color:#8fa9ee; }
+.t-ghost-edge{ border-left-color:#5a4a8f; } .t-grass-edge{ border-left-color:#5fbf5a; }
+.t-ground-edge{ border-left-color:#c8a24d; } .t-ice-edge{ border-left-color:#7fd3e0; }
+.t-normal-edge{ border-left-color:#9a9a86; } .t-poison-edge{ border-left-color:#a05fc0; }
+.t-psychic-edge{ border-left-color:#e2618c; } .t-rock-edge{ border-left-color:#b8a750; }
+.t-steel-edge{ border-left-color:#8f9fb0; } .t-water-edge{ border-left-color:#4f9bde; }
+.t-sound-edge{ border-left-color:#99FFCC; } .t-shine-edge{ border-left-color:#ffd600; }
+
+.result-overlay{
+  position:absolute; inset:0; z-index:20;
+  background: rgba(230,233,239,0.92);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+  opacity:0; pointer-events:none; transition: opacity .3s ease;
+}
+.result-overlay.show{ opacity:1; pointer-events:auto; }
+.result-card{
+  padding: 34px 48px; border-radius: var(--radius-lg);
+  background: var(--surface); box-shadow: var(--shadow-light);
+  text-align:center;
+}
+.result-title{ font-size: clamp(20px,3vw,30px); font-weight:900; margin:0 0 6px; }
+.result-title.win{ color:#3aa863; }
+.result-title.lose{ color:#e0596b; }
+.result-desc{ margin:0 0 18px; color:var(--ink-soft); font-weight:700; font-size:13px; }
+.result-mp-actions{ display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+.result-mp-actions .start-btn{ min-width:120px; }
+
+.trade-overlay{
+  position:absolute; inset:0; z-index:25;
+  background: rgba(20,22,30,0.7);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px;
+  opacity:0; pointer-events:none; transition: opacity .25s ease;
+  padding: 16px;
+}
+.trade-overlay.show{ opacity:1; pointer-events:auto; }
+.trade-card{
+  width: min(94%, 760px);
+  padding: 22px 26px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  text-align:center;
+}
+.trade-title{ font-weight:900; font-size: clamp(14px,2vw,18px); color:var(--ink); margin:0 0 16px; }
+.trade-offer-row{ display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
+
+.trade-poke-card{
+  position:relative;
+  width: 150px; padding: 14px 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  text-align:center;
+  cursor:pointer;
+  border: 2px solid transparent;
+  transition: border-color .15s ease, transform .12s ease;
+}
+.trade-poke-card:active{ transform: scale(0.97); }
+.trade-poke-card.disabled{ opacity:0.4; cursor:not-allowed; pointer-events:none; }
+.trade-poke-card img{
+  width:76px; height:76px; object-fit:contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(2px 3px 3px rgba(0,0,0,0.18));
+}
+.trade-poke-card .tpc-noimg{
+  width:76px; height:76px; margin:0 auto;
+  border-radius:50%;
+  background: var(--surface); box-shadow: var(--shadow-inset-sm);
+  display:flex; align-items:center; justify-content:center;
+  font-size:10px; color:var(--ink-soft); font-weight:700;
+}
+.trade-poke-card .tpc-name{ font-weight:800; font-size:13px; margin-top:8px; }
+.trade-poke-card .tpc-types{ display:flex; gap:4px; justify-content:center; margin-top:6px; flex-wrap:wrap; }
+.trade-poke-card .tpc-hp{ margin-top:6px; font-size:10px; color:var(--ink-soft); font-weight:700; }
+.tpc-info-btn{
+  position:absolute; top:6px; right:6px;
+  width:22px; height:22px; border-radius:50%;
+  background: var(--surface); box-shadow: var(--shadow-light-sm);
+  border:none; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:900; color:var(--accent-b);
+  font-style: italic;
+  z-index:5;
+}
+.tpc-info-btn:active{ box-shadow: var(--shadow-inset-sm); }
+
+.trade-detail-overlay{
+  position:absolute; inset:0; z-index:50;
+  background: rgba(20,22,30,0.55);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+  opacity:0; pointer-events:none; transition: opacity .2s ease;
+  padding: 16px;
+}
+.trade-detail-overlay.show{ opacity:1; pointer-events:auto; }
+.trade-detail-card{
+  width: min(94%, 420px);
+  padding: 18px 20px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  display:flex; flex-direction:column; gap:10px;
+}
+
+#pick-overlay .trade-offer-row{ flex-wrap:nowrap; gap:8px; }
+#pick-overlay .trade-poke-card{ width: 92px; padding: 10px 6px 10px; }
+#pick-overlay .trade-poke-card img{ width:48px; height:48px; }
+#pick-overlay .trade-poke-card .tpc-name{ font-size:10px; margin-top:6px; }
+#pick-overlay .trade-poke-card .tpc-types{ margin-top:4px; }
+#pick-overlay .trade-poke-card .type-chip{ font-size:8px; padding:2px 5px; }
+#pick-overlay .trade-poke-card.selected{ border-color: var(--accent-b); }
+#pick-overlay .tpc-info-btn{ width:24px; height:24px; top:4px; right:4px; }
+.pick-order-badge{
+  position:absolute; top:-7px; left:-7px;
+  width:20px; height:20px; border-radius:50%;
+  background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  color:#fff; font-weight:900; font-size:11px;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow: 1px 1px 3px rgba(0,0,0,0.25);
+}
+.pick-count{ font-weight:800; font-size:12px; color:var(--ink-soft); margin: 0; }
+#btn-pick-confirm[disabled]{ opacity:0.4; cursor:not-allowed; }
+
+/* ---- 対人選出タイマー & 交換フェーズ ---- */
+.pick-timer-badge{
+  position:absolute; top:10px; right:14px;
+  width:40px; height:40px; border-radius:50%;
+  background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  color:#fff; font-weight:900; font-size:16px;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow: 1px 1px 4px rgba(0,0,0,0.25);
+  z-index:5;
+}
+.pick-timer-badge.warn{ background: linear-gradient(135deg, #e0596b, #c23a4d); animation: pickTimerPulse 0.6s infinite; }
+@keyframes pickTimerPulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.12);} }
+.trade-card{ position:relative; }
+.negotiate-card{ width: min(94%, 640px); }
+.nego-swap-count{ font-weight:800; font-size:12px; color:var(--ink-soft); margin: 0 0 14px; }
+.nego-btn-row{ display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+.nego-btn{ min-width:120px; }
+.nego-btn[disabled]{ opacity:0.4; cursor:not-allowed; }
+.nego-hint{ margin:12px 0 0; font-size:11px; color:var(--ink-soft); font-weight:700; min-height:14px; }
+#nego-cards .trade-poke-card,
+#nego-reorder-cards .trade-poke-card{ cursor:pointer; }
+#nego-reorder-cards .trade-poke-card.swap-armed{ border-color: var(--accent-b); }
+
+.team-title{ font-weight:900; font-size: clamp(14px,2vw,18px); color:var(--ink); margin:0; }
+.reorder-poke-card.swap-armed{ border-color: var(--accent-b); }
+.reorder-cards.reorder-mode .reorder-poke-card{ cursor:pointer; }
+.reorder-actions{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-top: 4px; }
+
+.party-overlay{
+  position:absolute; inset:0; z-index:30;
+  background: rgba(20,22,30,0.55);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap: 14px;
+  opacity:0; pointer-events:none;
+  transition: opacity .2s ease;
+}
+.party-overlay.show{ opacity:1; pointer-events:auto; }
+.party-panel{
+  width: min(94%, 720px);
+  height: min(88%, 340px);
+  display:flex;
+  border-radius: var(--radius-lg);
+  overflow:hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+}
+.party-close-btn{
+  padding: 9px 30px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.party-list{
+  flex: 0 0 34%;
+  display:flex; flex-direction:column; gap:8px;
+  padding: 14px;
+  overflow-y:auto;
+  background: var(--surface-deep);
+}
+.party-list-item{
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-light-sm);
+  display:flex; align-items:center; gap:10px;
+  text-align:left;
+  cursor:pointer;
+  border: 2px solid transparent;
+}
+.party-list-item.active{ border-color: var(--accent-a); }
+.party-list-item:disabled, .party-list-item.fainted{ opacity:0.45; cursor:not-allowed; }
+.pli-icon{
+  width:40px; height:40px; flex:none; border-radius:50%;
+  background: var(--surface-deep); box-shadow: var(--shadow-inset-sm);
+  display:flex; align-items:center; justify-content:center;
+  font-size:10px; font-weight:800; color:var(--ink-soft);
+  object-fit:contain; image-rendering:pixelated;
+}
+.pli-info{ flex:1; min-width:0; }
+.pli-name{ font-weight:800; font-size:13px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pli-hpbar-outer{ margin-top:4px; height:6px; border-radius:999px; background:var(--surface-deep); box-shadow:var(--shadow-inset-sm); overflow:hidden; }
+.pli-hpbar-inner{ height:100%; border-radius:999px; background:var(--accent-hp); }
+.pli-hp-text{ margin-top:3px; font-size:9.5px; font-weight:700; color:var(--ink-soft); }
+.pli-status-tag{ font-size:8.5px; font-weight:900; color:#fff; padding:1px 6px; border-radius:999px; background:#c77b2e; margin-top:3px; margin-right:3px; display:inline-block; }
+.pli-active-tag{ font-size:8.5px; font-weight:900; color:var(--accent-a); margin-top:3px; }
+.pli-select-btn{
+  flex:none;
+  font-size:11px; font-weight:800;
+  padding:6px 12px; border-radius:999px;
+}
+
+.party-detail{
+  flex:1;
+  padding: 16px 20px;
+  overflow-y:auto;
+  display:flex; flex-direction:column; gap:10px;
+}
+.pd-header{ display:flex; align-items:baseline; gap:10px; }
+.pd-name{ font-size:18px; font-weight:900; color:var(--ink); }
+.pd-lv{ font-size:12px; font-weight:800; color:var(--ink-soft); }
+.pd-types{ display:flex; gap:5px; margin-left:auto; }
+
+.pd-section-title{ font-size:11px; font-weight:800; color:var(--ink-soft); margin: 2px 0 -2px; }
+
+.pd-moves{ display:flex; flex-direction:column; gap:5px; }
+.pd-move-row{
+  display:flex; align-items:center; gap:8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  border-left: 6px solid transparent;
+  font-size:12.5px; font-weight:700;
+}
+.pd-move-row .move-row-type-icon{ width:16px; height:16px; }
+.pd-move-name{ flex:1; }
+.pd-move-pp{ font-size:10.5px; font-weight:700; color:var(--ink-soft); }
+
+.pd-lower{ display:flex; gap:12px; margin-top:4px; }
+.pd-ability-box{
+  flex: 0 0 46%;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  padding: 10px 12px;
+}
+.pd-ability-label{ font-size:10px; font-weight:800; color:var(--ink-soft); }
+.pd-ability-name{ font-size:13px; font-weight:800; color:var(--ink); margin-top:2px; }
+.pd-ability-desc{ font-size:10px; color:var(--ink-soft); margin-top:4px; line-height:1.4; }
+
+.pd-stats{
+  flex:1;
+  min-width:0;
+  display:grid; grid-template-columns: 1fr 1fr; gap:5px 10px;
+}
+.pd-stat-row{ display:flex; align-items:baseline; justify-content:space-between; font-size:11.5px; font-weight:700; color:var(--ink); }
+.pd-stat-name{ color:var(--ink-soft); flex-shrink:0; }
+.pd-stat-values{ display:inline-flex; align-items:baseline; gap:6px; }
+.pd-stat-value{ color:var(--ink); }
+.pd-stat-ev{ font-size:9.5px; color:var(--ink-soft); font-weight:700; }
+
+.confirm-overlay{
+  position:absolute; inset:0; z-index:200;
+  background: rgba(20,22,30,0.45);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; pointer-events:none;
+  transition: opacity .15s ease;
+}
+.confirm-overlay.show{ opacity:1; pointer-events:auto; }
+.confirm-card{
+  padding: 22px 28px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  text-align:center;
+  max-width: 82%;
+}
+.confirm-text{ margin:0 0 16px; font-weight:800; font-size:14px; color:var(--ink); }
+.confirm-btn-row{ display:flex; gap:12px; justify-content:center; }
+.confirm-btn{ padding:9px 26px; border-radius:999px; font-size:13px; }
+.confirm-yes{ background: linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff; }
+
+
+#fullscreen-gate{
+  position:fixed; inset:0; z-index:10000;
+  background: var(--bg-0);
+  display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:16px;
+}
+#fullscreen-gate.hide{ display:none; }
+.fs-icon{ font-size:46px; }
+.fs-text{ font-weight:800; color:var(--ink-soft); font-size:14px; text-align:center; padding:0 30px;}
+.fs-start-btn{
+  margin-top: 6px;
+  padding: 14px 48px;
+  border-radius: 999px;
+  border: none;
+  font-size: 16px;
+  font-weight: 900;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  box-shadow: var(--shadow-light);
+  cursor: pointer;
+}
+.fs-start-btn:active{ transform: scale(0.97); }
+
+.t-bug{background:#8fbb2e;} .t-dark{background:#5a5366;} .t-dragon{background:#7161e0;}
+.t-electric{background:#e8c832;color:#5a4b00;} .t-fairy{background:#ee9bd0;color:#6b2a56;}
+.t-fighting{background:#c0432c;} .t-fire{background:#f0812e;} .t-flying{background:#8fa9ee;}
+.t-ghost{background:#5a4a8f;} .t-grass{background:#5fbf5a;} .t-ground{background:#c8a24d;color:#4a3818;}
+.t-ice{background:#7fd3e0;color:#075a63;} .t-normal{background:#9a9a86;} .t-poison{background:#a05fc0;}
+.t-psychic{background:#e2618c;} .t-rock{background:#b8a750;color:#453c10;} .t-steel{background:#8f9fb0;}
+.t-water{background:#4f9bde;} .t-sound{background:#99FFCC;color:#0a5c3f;} .t-shine{background:#ffd600;color:#5a4400;}
+.t-type23{background:#e2618c;} .t-type24{background:#5fbf5a;}
+
+@media (max-height: 420px){
+  .hud{ padding:7px 12px 9px; width:150px; }
+  .hud-self{ width:170px; }
+  .sprite-slot{ width:112px; height:112px; }
+  .row-opp .sprite-slot{ width:90px; height:90px; }
+  .row-self .sprite-slot{ width:150px; height:150px; }
+  .sprite.sprite-self{ width:150px; height:150px; }
+  .sprite.sprite-opp{ width:88px; height:88px; }
+  .battler-row{ gap:8px; }
+  .msg-toast{ font-size:12.5px; padding:8px 14px; }
+  .cmd-btn{ font-size:13px; padding:12px 8px; }
+  .cmd-dock{ width:180px; }
+  .move-list{ width:250px; }
+  .move-row{ font-size:14px; }
+  .multi-menu-btn{ width: 180px; height: 150px; }
+  .multi-menu-btn .mmb-icon{ font-size: 34px; }
+  .host-room-id{ font-size: 44px; padding: 8px 20px 8px 28px; }
+  .title-menu-btn{ padding: 14px 22px; min-width: 150px; }
+}
+</style>
+</head>
+<body>
+
+<div id="rotate-hint">
+  <div class="rotate-icon">🔄</div>
+  <p>端末を横向きにしてください</p>
+  <p style="font-size:12px;">（画面をタップすると全画面表示に戻ります）</p>
+</div>
+
+<div id="app">
+
+  <!-- ================= TITLE ================= -->
+  <div id="screen-title" class="screen">
+    <div class="title-card">
+      <p class="title-logo">ポケリエ バトルファクトリー</p>
+      <p class="title-logo" style="font-size:0.55em; margin-top:-14px;">BATTLE FACTORY</p>
+      <p class="title-sub">MPLだけの オリジナル対戦ゲーム</p>
+      <div class="title-menu-row">
+        <button id="btn-npc-battle" class="neu-btn primary title-menu-btn" type="button">
+          <span class="tmb-title">NPCとバトル</span>
+          <span class="tmb-sub">1人で挑戦</span>
+        </button>
+        <button id="btn-player-battle" class="neu-btn title-menu-btn" type="button">
+          <span class="tmb-title">プレイヤーとバトル</span>
+          <span class="tmb-sub">友達と対戦</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MULTIPLAYER MENU ================= -->
+  <div id="screen-multiplayer" class="screen">
+    <p class="multi-menu-title">たいせんほうほうを えらんでください</p>
+    <div class="multi-menu-row">
+      <button id="btn-create-room" class="neu-btn primary multi-menu-btn" type="button">
+        <span class="mmb-icon">🏠</span>
+        <span class="mmb-title">ルームを作成</span>
+        <span class="mmb-sub">ホストになる</span>
+      </button>
+      <button id="btn-join-room" class="neu-btn multi-menu-btn" type="button">
+        <span class="mmb-icon">🔑</span>
+        <span class="mmb-title">あいことばで入室</span>
+        <span class="mmb-sub">ルームに参加する</span>
+      </button>
+    </div>
+    <button id="multi-back-to-title" class="neu-btn multi-menu-back" type="button">タイトルにもどる</button>
+  </div>
+
+  <!-- ================= HOST / GUEST WAITING ================= -->
+  <div id="screen-host-waiting" class="screen">
+    <div class="host-wait-card">
+      <p class="host-wait-title" id="host-wait-title">ルームを作成しました</p>
+      <p class="host-wait-player-name" id="host-wait-player-name">- さん</p>
+      <span class="host-room-id-label">ルームID</span>
+      <div class="host-room-id" id="host-room-id">0000</div>
+      <p class="host-wait-hint" id="host-wait-hint">友達にこの4ケタの番号を伝えてください</p>
+      <div class="host-wait-spinner"></div>
+    </div>
+    <button id="host-wait-cancel" class="neu-btn host-wait-cancel" type="button">キャンセル</button>
+  </div>
+
+  <!-- ================= TEAM REVEAL / REORDER ================= -->
+  <div id="screen-team" class="screen">
+    <p class="team-title">あなたの手持ちポケモン</p>
+    <div id="team-cards" class="trade-offer-row reorder-cards"></div>
+    <div class="reorder-actions">
+      <button id="btn-reorder-toggle" class="neu-btn" type="button">並び替えをする</button>
+      <button id="btn-to-battle" class="neu-btn primary start-btn">スタート</button>
+    </div>
+  </div>
+
+  <!-- INITIAL PICK -->
+  <div class="trade-overlay" id="pick-overlay">
+    <div class="trade-card">
+      <div class="pick-timer-badge" id="pick-timer-badge" style="display:none;">
+        <span id="pick-timer-num">30</span>
+      </div>
+      <p class="trade-title">6匹の中から3匹えらんでください（えらんだ順に手持ちへ並びます）</p>
+      <div class="trade-offer-row" id="pick-row"></div>
+      <p class="pick-count" id="pick-count">0 / 3 選択中</p>
+      <button id="btn-pick-confirm" class="neu-btn primary start-btn" disabled>けってい</button>
+    </div>
+  </div>
+
+  <!-- ================= NEGOTIATE (対人戦：選出後の交換フェーズ) ================= -->
+  <div class="trade-overlay" id="negotiate-overlay">
+    <div class="trade-card negotiate-card">
+      <div class="pick-timer-badge" id="nego-timer-badge">
+        <span id="nego-timer-num">30</span>
+      </div>
+      <p class="trade-title">手持ちを確認してください</p>
+      <div class="trade-offer-row" id="nego-cards"></div>
+      <p class="nego-swap-count" id="nego-swap-count">交換のこり 5回</p>
+      <div class="nego-btn-row">
+        <button id="btn-nego-confirm" class="neu-btn primary nego-btn" type="button">けってい</button>
+        <button id="btn-nego-reorder" class="neu-btn nego-btn" type="button">入れ替える</button>
+        <button id="btn-nego-swap" class="neu-btn nego-btn" type="button">手持ちを変える</button>
+      </div>
+      <p class="nego-hint" id="nego-hint"></p>
+    </div>
+  </div>
+
+  <!-- NEGOTIATE: reorder mode overlay (入れ替え中) -->
+  <div class="trade-overlay" id="nego-reorder-overlay">
+    <div class="trade-card negotiate-card">
+      <p class="trade-title">入れ替えたい2匹をタップしてください</p>
+      <div class="trade-offer-row" id="nego-reorder-cards"></div>
+      <button id="btn-nego-reorder-done" class="neu-btn primary start-btn" type="button">もどる</button>
+    </div>
+  </div>
+
+  <!-- NEGOTIATE: swap offer (ランダム3匹から選ぶ) -->
+  <div class="trade-overlay" id="nego-swap-overlay">
+    <div class="trade-card">
+      <p class="trade-title">このポケモンの中から選んでください</p>
+      <div class="trade-offer-row" id="nego-swap-offer-row"></div>
+    </div>
+  </div>
+
+  <!-- NEGOTIATE: swap replace (だれと交換するか) -->
+  <div class="trade-overlay" id="nego-swap-replace-overlay">
+    <div class="trade-card">
+      <p class="trade-title" id="nego-swap-replace-title">だれと交換しますか？</p>
+      <div class="trade-offer-row" id="nego-swap-replace-row"></div>
+    </div>
+  </div>
+
+  <!-- NEGOTIATE: waiting for opponent -->
+  <div class="trade-overlay" id="nego-wait-overlay">
+    <div class="trade-card">
+      <p class="trade-title">相手の準備を待っています…</p>
+      <div class="host-wait-spinner"></div>
+    </div>
+  </div>
+
+  <!-- ================= BATTLE ================= -->
+  <div id="screen-battle" class="screen">
+    <div class="battle-field" id="battle-field">
+      <div class="field-floor"></div>
+      <div class="poke-platform plat-opp"></div>
+      <div class="poke-platform plat-self"></div>
+
+      <div class="battler-row row-opp">
+        <div class="hud hud-opp" id="hud-opp">
+          <div class="hud-name-row">
+            <span class="hud-name" id="opp-name">-</span>
+            <span class="hud-lv" id="opp-lv">Lv100</span>
+          </div>
+          <div class="hud-hpbar-outer"><div class="hud-hpbar-inner" id="opp-hpbar"></div></div>
+          <div class="hud-hp-percent" id="opp-hp-percent">100%</div>
+          <div id="opp-status"></div>
+        </div>
+        <div class="sprite-slot" id="sprite-opp-wrap"></div>
+      </div>
+
+      <div class="battler-row row-self">
+        <div class="sprite-slot" id="sprite-self-wrap"></div>
+        <div class="hud hud-self" id="hud-self">
+          <div class="hud-name-row">
+            <span class="hud-name" id="self-name">-</span>
+            <span class="hud-lv" id="self-lv">Lv100</span>
+          </div>
+          <div class="hud-hpbar-outer"><div class="hud-hpbar-inner" id="self-hpbar"></div></div>
+          <div class="hud-hp-text" id="self-hp-text">0/0</div>
+          <div id="self-status"></div>
+        </div>
+      </div>
+
+      <div class="msg-toast" id="msg-panel"><span class="msg-line" id="msg-line"></span></div>
+
+      <div class="battle-log-stack" id="battle-log-stack"></div>
+
+      <div class="watch-overlay" id="watch-overlay">
+        <div class="watch-panel">
+          <div class="watch-side-list" id="watch-side-list"></div>
+          <div class="watch-detail">
+            <div class="watch-detail-header">
+              <span class="watch-detail-name" id="watch-detail-name">-</span>
+              <span class="watch-detail-lv" id="watch-detail-lv">Lv100</span>
+              <span class="watch-detail-status-badge" id="watch-detail-status-badge" style="display:none;"></span>
+            </div>
+            <div class="watch-detail-types" id="watch-detail-types"></div>
+            <div class="watch-detail-hpbar-outer"><div class="watch-detail-hpbar-inner" id="watch-detail-hpbar"></div></div>
+            <div class="watch-detail-hp-text" id="watch-detail-hp-text">0/0</div>
+            <div class="watch-lower">
+              <div class="watch-lower-col">
+                <div class="watch-section-title">のうりょくランク</div>
+                <div class="watch-ranks" id="watch-detail-ranks"></div>
+              </div>
+              <div class="watch-lower-divider"></div>
+              <div class="watch-lower-col">
+                <div class="watch-section-title">状態</div>
+                <div class="watch-status-row" id="watch-status-row"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button class="neu-btn party-close-btn watch-close-btn" id="watch-close">もどる</button>
+      </div>
+
+      <div class="log-overlay" id="log-overlay">
+        <div class="log-panel">
+          <div class="log-panel-title">たたかいのログ</div>
+          <div class="log-panel-list" id="log-panel-list"></div>
+        </div>
+        <button class="neu-btn party-close-btn watch-close-btn" id="log-close">もどる</button>
+      </div>
+
+      <div class="battle-bottom">
+        <div class="cmd-dock" id="cmd-dock">
+          <button class="neu-btn dock-log-btn hide-when-acting" id="act-log">ログを見る</button>
+          <button class="neu-btn dock-watch-btn hide-when-acting" id="act-watch" disabled>様子を見る</button>
+          <div class="cmd-panel" id="cmd-panel"></div>
+        </div>
+      </div>
+
+      <div class="party-overlay" id="party-overlay">
+        <div class="party-panel">
+          <div class="party-list" id="party-list"></div>
+          <div class="party-detail" id="party-detail"></div>
+        </div>
+        <button class="neu-btn party-close-btn" id="party-close">もどる</button>
+      </div>
+    </div>
+
+    <div class="result-overlay" id="result-overlay">
+      <div class="result-card">
+        <p class="result-title" id="result-title">WIN</p>
+        <p class="result-desc" id="result-desc"></p>
+        <button id="btn-result-next" class="neu-btn primary start-btn">つぎへ</button>
+        <div id="result-mp-actions" class="result-mp-actions" style="display:none;">
+          <button id="btn-mp-rematch" class="neu-btn primary start-btn">連戦する</button>
+          <button id="btn-mp-leave" class="neu-btn start-btn">抜ける</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 対人戦：連戦の相手待ち -->
+    <div class="result-overlay" id="rematch-wait-overlay">
+      <div class="result-card">
+        <p class="result-title" id="rematch-wait-title">連戦を希望しています</p>
+        <p class="result-desc" id="rematch-wait-desc">相手の返事を待っています…</p>
+        <div class="host-wait-spinner"></div>
+      </div>
+    </div>
+
+    <div class="trade-overlay" id="trade-overlay">
+      <div class="trade-card">
+        <p class="trade-title">このポケモンの中から選んでください</p>
+        <div class="trade-offer-row" id="trade-offer-row"></div>
+      </div>
+    </div>
+
+    <div class="trade-overlay" id="trade-replace-overlay">
+      <div class="trade-card">
+        <p class="trade-title" id="trade-replace-title">だれと交換しますか？</p>
+        <div class="trade-offer-row" id="trade-replace-row"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 交換候補の詳細 -->
+  <div class="trade-detail-overlay" id="trade-detail-overlay">
+    <div class="trade-detail-card" id="trade-detail-card"></div>
+    <button class="neu-btn party-close-btn" id="trade-detail-close">とじる</button>
+  </div>
+
+  <!-- マルチプレイ用モーダル（あいことば入室のみ。ルーム作成は名前入力なしで即実行） -->
+  <div class="multi-modal-overlay" id="name-modal">
+    <div class="multi-modal-card">
+      <p class="multi-modal-title" id="name-modal-title">あいことばで入室</p>
+
+      <div id="join-code-field">
+        <label class="multi-input-label" for="input-room-code">あいことば（4ケタの数字）</label>
+        <input type="text" id="input-room-code" class="multi-input" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="0000" autocomplete="off">
+        <div class="multi-input-hint" id="code-char-count-hint"><span id="code-char-count">0</span> / 4</div>
+      </div>
+
+      <div class="multi-modal-btn-row">
+        <button class="neu-btn multi-modal-btn" id="name-modal-cancel" type="button">キャンセル</button>
+        <button class="neu-btn primary multi-modal-btn" id="name-modal-confirm" type="button">けってい</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 確認ダイアログ（はい/いいえ）。特定のscreenの中に置かず #app 直下（全screen共通の最上位）に
+       配置することで、対人戦の選出後交換フェーズなど screen-battle がまだアクティブでない場面でも
+       ルームマッチング待機画面等の下に隠れず、常に最前面に確実に表示されるようにしている。 -->
+  <div class="confirm-overlay" id="confirm-overlay">
+    <div class="confirm-card">
+      <p class="confirm-text" id="confirm-text">このポケモンと交代しますか？</p>
+      <div class="confirm-btn-row">
+        <button class="neu-btn confirm-btn confirm-yes" id="confirm-yes">はい</button>
+        <button class="neu-btn confirm-btn confirm-no" id="confirm-no">いいえ</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Firebase SDK (compat) -->
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-database-compat.js"></script>
+
+<!-- ゲーム本体 -->
+<script src="firebase-config.js"></script>
+<script src="gamedata.js"></script>
+<script src="engine.js"></script>
+<script src="net.js"></script>
+<script src="typefx.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
