@@ -104,6 +104,61 @@ const AssetPreloader = (() => {
   return { preloadImage, preloadAudio, preloadAll, audioBuffers };
 })();
 
+/* =========================================================
+   iOS自動再生ポリシー対策
+   ---------------------------------------------------------
+   iOS Safari は「ユーザー操作の同期スタック内で play() を成功させた
+   Audio 要素」しか、その後自由に再生できない。
+   Android Chrome はこの制限が緩いため、プリロード要素でも鳴る。
+   ここでは最初のユーザー操作時に、全ての効果音・BGM候補を
+   無音（muted）で play() → pause() してアンロックする。
+   ========================================================= */
+let _audioUnlocked = false;
+function unlockAllAudioOnFirstInteraction() {
+  if (_audioUnlocked) return;
+  _audioUnlocked = true;
+
+  const tryUnlock = (a) => {
+    if (!a) return;
+    try {
+      const prevMuted = a.muted;
+      const prevVol = a.volume;
+      a.muted = true;
+      a.volume = 0;
+      const p = a.play();
+      const restore = () => {
+        try {
+          a.pause();
+          a.currentTime = 0;
+        } catch (e) {}
+        a.muted = prevMuted;
+        a.volume = prevVol;
+      };
+      if (p && p.then) {
+        p.then(restore).catch(() => {
+          a.muted = prevMuted;
+          a.volume = prevVol;
+        });
+      } else {
+        restore();
+      }
+    } catch (e) {}
+  };
+
+  // click.mp3 プール
+  clickSoundPool.forEach(tryUnlock);
+  // バトル効果音プール
+  Object.keys(battleSfxPools).forEach((path) => {
+    const entry = battleSfxPools[path];
+    if (entry && entry.pool) entry.pool.forEach(tryUnlock);
+  });
+  // BGM候補（menu.mp3 と 1〜20.mp3）。BgmPlayer が使用する Audio も含めて
+  // 全てのAudioElementをアンロック対象にする。
+  AssetPreloader.audioBuffers.forEach((a) => tryUnlock(a));
+  // BgmPlayer 内部で使っている Audio 要素（プリロード済みでない場合の保険）
+  tryUnlock(BgmPlayer.element);
+}
+
 /* ---------------- UIクリック効果音 ---------------- */
 // 連打しても遅延なく鳴らせるよう、複数のAudioインスタンスをプールして使い回す
 const CLICK_SOUND_POOL_SIZE = 6;
@@ -179,10 +234,62 @@ function playRankDownSound() { playBattleSfx('./fall.mp3'); }
 // click.mp3同様、あらかじめプールを生成しておき初回再生の遅延を防ぐ
 ['./supeff.mp3', './noteff.mp3', './hit.mp3', './sup.mp3', './fall.mp3'].forEach(getBattleSfxPool);
 
+/* =========================================================
+   BGMプレイヤー（MenuBgm / BattleBgm 共通）
+   ---------------------------------------------------------
+   iOS Safari は「一度アンロックに成功した Audio 要素」であれば、
+   その後 src を差し替えても自由に play() できる。
+   そこで menu.mp3 もバトルBGM(1〜20.mp3) も、単一の Audio 要素の
+   src を切り替えて再生する方式に統一する。
+   （プリロードは AssetPreloader 側でキャッシュ済みなので、
+     初回ロード遅延もほぼない）
+   ========================================================= */
+const BgmPlayer = (() => {
+  const audio = new Audio();
+  audio.loop = true;
+  audio.volume = 0.4;
+  audio.preload = 'auto';
+
+  let currentPath = null;
+  let playing = false;
+
+  function play(path, volume) {
+    currentPath = path;
+    if (volume !== undefined) audio.volume = volume;
+    try {
+      // 同じ曲を再生し直す場合はリセットしない（画面遷移での途切れ防止）
+      if (audio.src && !audio.src.endsWith(path)) {
+        audio.src = path;
+        try { audio.currentTime = 0; } catch (e) {}
+      } else if (!audio.src) {
+        audio.src = path;
+      }
+    } catch (e) {}
+    playing = true;
+    const p = audio.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+
+  function stop() {
+    playing = false;
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+    } catch (e) {}
+  }
+
+  return {
+    element: audio,
+    play,
+    stop,
+    isPlaying: () => playing,
+    currentPath: () => currentPath,
+    setVolume: (v) => { audio.volume = v; },
+  };
+})();
+
 /* ---------------- バトルBGM ---------------- */
 const BattleBgm = (() => {
-  let currentAudio = null;
-
   function pickTrackPath() {
     const n = rand(1, 20);
     return `./${n}.mp3`;
@@ -190,26 +297,12 @@ const BattleBgm = (() => {
 
   function start() {
     MenuBgm.stop();
-    stop();
     const path = pickTrackPath();
-    const preloaded = AssetPreloader.audioBuffers.get(path);
-    const audio = preloaded ? preloaded : new Audio(path);
-    audio.loop = true;
-    audio.volume = 0.4;
-    try { audio.currentTime = 0; } catch (e) {}
-    currentAudio = audio;
-    const p = audio.play();
-    if (p && p.catch) p.catch(() => {});
+    BgmPlayer.play(path, 0.4);
   }
 
   function stop() {
-    if (currentAudio) {
-      try {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-      } catch (e) {}
-      currentAudio = null;
-    }
+    BgmPlayer.stop();
   }
 
   return { start, stop };
@@ -219,33 +312,15 @@ const BattleBgm = (() => {
 // バトル本編（トレーナー戦・対人戦）に入っている間以外、基本的にこれを鳴らし続ける。
 // すでに再生中なら再度呼ばれても再生し直さない（画面遷移のたびに音が途切れないように）。
 const MenuBgm = (() => {
-  let audio = null;
-  let playing = false;
-
-  function getAudio() {
-    if (audio) return audio;
-    const preloaded = AssetPreloader.audioBuffers.get('./menu.mp3');
-    audio = preloaded ? preloaded : new Audio('./menu.mp3');
-    audio.loop = true;
-    audio.volume = 0.4;
-    return audio;
-  }
-
   function start() {
-    if (playing) return;
-    playing = true;
-    const a = getAudio();
-    const p = a.play();
-    if (p && p.catch) p.catch(() => {});
+    // 既に menu.mp3 を再生中なら何もしない（画面遷移での途切れ防止）
+    if (BgmPlayer.isPlaying() && BgmPlayer.currentPath() === './menu.mp3') return;
+    BgmPlayer.play('./menu.mp3', 0.4);
   }
 
   function stop() {
-    playing = false;
-    if (audio) {
-      try {
-        audio.pause();
-        audio.currentTime = 0;
-      } catch (e) {}
+    if (BgmPlayer.currentPath() === './menu.mp3') {
+      BgmPlayer.stop();
     }
   }
 
@@ -2847,9 +2922,15 @@ showScreen('title');
 // アセット（画像・効果音・BGM）を事前読み込みしておく
 AssetPreloader.preloadAll();
 
-// ブラウザの自動再生制限のため、最初のユーザー操作でホームBGMを開始する
+// ブラウザの自動再生制限のため、最初のユーザー操作で
+// (1) 全オーディオのアンロック（iOS対策）と (2) ホームBGM開始 を行う。
 function startMenuBgmOnFirstInteraction() {
+  // ---- iOS対策：全Audioを無音でアンロック ----
+  unlockAllAudioOnFirstInteraction();
+
+  // ---- ホームBGM開始 ----
   MenuBgm.start();
+
   document.removeEventListener('pointerdown', startMenuBgmOnFirstInteraction, true);
   document.removeEventListener('click', startMenuBgmOnFirstInteraction, true);
 }
