@@ -1972,6 +1972,7 @@ function updateNameCharCount() {
 
 function openNameModal() {
   // 「あいことばで入室」専用モーダル（ルーム作成は名前入力なしで即実行するため呼ばれない）
+  MenuBgm.start(); // 既に再生中なら何もしない（MenuBgm.start内部でガード済み）
   $('name-modal-title').textContent = 'あいことばで入室';
   $('input-room-code').value = '';
   updateNameCharCount();
@@ -2632,23 +2633,24 @@ async function handleGuestEvent(ev) {
     const hpSnapshot = ev.hp;
 
     // ホストから毎回送られてくる両アクティブの実データスナップショットを、
-    // 表示更新の前にまず実データへ反映する。ホスト視点 player→ゲスト画面の自分(self)、
-    // ホスト視点 cpu→ゲスト画面の相手(opp) に対応する。
+    // 表示更新の前にまず実データへ反映する。ホスト視点 player はホストの自分側＝
+    // ゲスト画面では相手(opp)、ホスト視点 cpu はホストの相手側＝ゲスト画面では自分(self) に対応する。
+    // （ev.h や logSide の変換と同じ player↔cpu 反転をここでも揃える）
     // ダメージ演出のないメッセージ（状態異常付与・天候ダメージ等）でも
     // currentHp/statusが確実に同期されるようにするための処理。
-    if (ev.pSnap && state.playerActive && state.playerActive.speciesId === ev.pSnap.sid) {
-      state.playerActive.currentHp = ev.pSnap.hp;
-      state.playerActive.maxHp = ev.pSnap.mhp;
-      state.playerActive.status = ev.pSnap.st;
-      state.playerActive.confuseTurns = ev.pSnap.cf || 0;
-      state.playerActive.fainted = ev.pSnap.fainted;
+    if (ev.pSnap && state.cpuActive && state.cpuActive.speciesId === ev.pSnap.sid) {
+      state.cpuActive.currentHp = ev.pSnap.hp;
+      state.cpuActive.maxHp = ev.pSnap.mhp;
+      state.cpuActive.status = ev.pSnap.st;
+      state.cpuActive.confuseTurns = ev.pSnap.cf || 0;
+      state.cpuActive.fainted = ev.pSnap.fainted;
     }
-    if (ev.cSnap && state.cpuActive && state.cpuActive.speciesId === ev.cSnap.sid) {
-      state.cpuActive.currentHp = ev.cSnap.hp;
-      state.cpuActive.maxHp = ev.cSnap.mhp;
-      state.cpuActive.status = ev.cSnap.st;
-      state.cpuActive.confuseTurns = ev.cSnap.cf || 0;
-      state.cpuActive.fainted = ev.cSnap.fainted;
+    if (ev.cSnap && state.playerActive && state.playerActive.speciesId === ev.cSnap.sid) {
+      state.playerActive.currentHp = ev.cSnap.hp;
+      state.playerActive.maxHp = ev.cSnap.mhp;
+      state.playerActive.status = ev.cSnap.st;
+      state.playerActive.confuseTurns = ev.cSnap.cf || 0;
+      state.playerActive.fainted = ev.cSnap.fainted;
     }
 
     // 能力ランク変化がどちら側に起きたか（ホスト視点 player/cpu → ゲスト画面の opp/self に変換）
