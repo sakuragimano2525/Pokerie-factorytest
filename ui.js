@@ -99,11 +99,12 @@ const AssetPreloader = (() => {
 
   // BGM候補の事前ロード
   // ※ iOS Safari/WebKitには、同時に保持できる<audio>要素（デコーダー）の数に上限があり、
-  //   これを超えると既存のAudio要素が予告なく無効化されることがある。
+  //   これを超えると既存のAudio要素が予告なく無効化される。
   //   バトルBGM候補は20曲もあり、全曲を毎回事前ロードするとこの上限を超えやすく、
-  //   「効果音やBGMが消えたり復活したりする」というiPhone特有の不具合の主因になっていた。
+  //   「バトル中、ポケモンの交代あたりで再生中のBGMが突然消える」不具合の主因になっていた
+  //   （交代演出やSEの再生でAudio要素の同時使用数がさらに増え、上限を超えてしまうため）。
   //   そのため、軽量なメニュー曲だけを事前ロードし、バトルBGM本編は
-  //   実際に再生する1曲だけをその都度ロードする方式に変更する（loadAudioAssets参照）。
+  //   実際に再生する1曲だけをその都度ロードする方式に変更する（BattleBgm.start参照）。
   function preloadAudioAssets() {
     preloadAudio('./menu.mp3');
   }
@@ -134,8 +135,8 @@ function setRandomBattleBackground() {
 
 /* ---------------- UIクリック効果音 ---------------- */
 // 連打しても遅延なく鳴らせるよう、複数のAudioインスタンスをプールして使い回す
-// ※ iOSはHTMLAudioElementの同時保持数に上限があるため、プールは必要最小限に抑える
-const CLICK_SOUND_POOL_SIZE = 4;
+// ※ iOS Safariは<audio>要素の同時保持数の上限が特に厳しいため、プールは必要最小限に抑える
+const CLICK_SOUND_POOL_SIZE = 3;
 const clickSoundPool = [];
 let clickSoundIdx = 0;
 function initClickSoundPool() {
@@ -171,8 +172,8 @@ document.addEventListener('click', handleClickSoundTrigger, true);
 
 /* ---------------- バトル効果音（タイプ相性／ランク変化） ---------------- */
 // click.mp3と同じ「プール方式」で、連続再生してもラグなく鳴らせるようにする。
-// ※ iOSはHTMLAudioElementの同時保持数に上限があるため、プールは必要最小限に抑える
-const BATTLE_SFX_POOL_SIZE = 3;
+// ※ iOS Safariは<audio>要素の同時保持数の上限が特に厳しいため、プールは必要最小限に抑える
+const BATTLE_SFX_POOL_SIZE = 2;
 const battleSfxPools = {};
 function getBattleSfxPool(path) {
   if (!battleSfxPools[path]) {
@@ -3415,19 +3416,26 @@ function unlockAllAudioForIOS() {
     targets.push(a);
   });
   targets.forEach((a) => {
-    const originalVolume = a.volume;
     // このAudioインスタンスに対して、アンロック処理が再生を仕込んだ「印」を付けておく。
     // play()のPromise解決後、この印が書き換わっていなければ「その間に誰も
     // このインスタンスを使っていない」と分かるので、そのときだけ安全に止める。
     // バトルBGM開始などが割り込んでいた場合はここで止めてしまうと再生を潰してしまうため触らない。
     const token = {};
     a._iosUnlockToken = token;
-    try { a.volume = 0; } catch (e) {}
+    // muted はデコードや出力そのものをブロックするため、volumeより確実に無音化できる。
+    // 念のため volume も 0 にしておき、二重に無音対策をしておく
+    // （多数のAudio要素をまとめてアンロックする際、片方だけでは
+    // 「一瞬で全部の効果音が一気に流れる」ように聞こえる不具合が起きたため）。
+    const wasMuted = a.muted;
+    const originalVolume = a.volume;
+    a.muted = true;
+    a.volume = 0;
     const restore = () => {
       if (a._iosUnlockToken !== token) return; // 途中で他の再生に使われていたら何もしない
       try {
         a.pause();
         a.currentTime = 0;
+        a.muted = wasMuted;
         a.volume = originalVolume;
       } catch (e) {}
     };
@@ -3452,17 +3460,15 @@ function startMenuBgmOnFirstInteraction() {
 document.addEventListener('pointerdown', startMenuBgmOnFirstInteraction, true);
 document.addEventListener('click', startMenuBgmOnFirstInteraction, true);
 
-// ---- iOS: バックグラウンド復帰時にBGMが鳴らなくなる問題への対策 ----
-// iOS Safari/WebViewでは、ホームボタンを押す・他アプリに切り替える・画面をロックするなどして
+// ---- iOS Safari: バックグラウンド復帰時にBGMが鳴らなくなる問題への対策 ----
+// Safariでは、ホームボタンを押す・他アプリに切り替える・画面をロックするなどして
 // アプリがバックグラウンドに回ると、再生中の<audio>が強制的に一時停止される。
-// フォアグラウンドに戻った際にブラウザが自動で再開してくれるとは限らず、
-// 「さっきまで鳴っていたBGMが無音になる」「なぜか止まったり鳴ったりする」といった
-// 不安定な症状として現れる。document.visibilitychangeでこれを検知し、
-// 画面に戻ってきたタイミングで、鳴っているはずのBGMが止まっていれば再生を再開する。
+// フォアグラウンドに戻った際に自動で再開してくれるとは限らず、
+// 「さっきまで鳴っていたBGMが無音になる」といった症状として現れる。
+// document.visibilitychangeでこれを検知し、画面に戻ってきたタイミングで、
+// 鳴っているはずのBGMが止まっていれば再生を再開する。
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  // バトル中はバトルBGM、それ以外の画面ではメニューBGMが鳴っているはずの状態。
-  // どちらも「鳴っているはずなのに止まっている(paused)」場合だけ再生を試みる。
   const battleAudio = BattleBgm.getCurrentAudioIfAny ? BattleBgm.getCurrentAudioIfAny() : null;
   if (battleAudio && battleAudio.paused) {
     const p = battleAudio.play();
