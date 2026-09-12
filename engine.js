@@ -204,11 +204,8 @@ function createRandomPokemon(speciesId, level = 100) {
     utsusemiTurns: 0,       // うつせみカウント（相手に付与）
     infernoUsed: false,     // インフェルノを使用したフラグ
     deaigashiraLocked: false, // であいがしら：登場ターン以外はロック（交代で解除）
-    turnsOnField: 0,        // 場に出てから経過したターン数（0=登場ターン）。であいがしら等の初手限定判定に使用
     gekirinTurns: 0,        // げきりん：強制連続使用の残りターン数
     gekirinMoveId: null,    // げきりん：強制されている技ID
-    protecting: false,      // このターン「まもる」等で守っているか
-    protectStreak: 0,       // まもる等の連続成功回数（連続使用で失敗率が上がる）
   };
 }
 
@@ -657,7 +654,8 @@ function setWeather(key, turns, logFn) {
     snow: 'ゆきが　ふりはじめた！',
     starrysky: 'そらに　ほしが　またたきはじめた！',
   }[key];
-  if (msg) logFn(msg);
+  // weatherFx: UI側で天候発動時の画面演出（背景エフェクト）を出すための合図。
+  if (msg) logFn(msg, { weatherFx: key });
 }
 
 function setTerrain(key, turns, logFn) {
@@ -773,14 +771,8 @@ function calcDamage(attacker, defender, move, logFn) {
     if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) atkStat *= 2;
   }
 
-  // 急所ランク：base(0) + きょううん特性(+1) + 高確率急所技(+1) の合計で決定する。
-  // ランク0=1/16, 1=1/8, 2=1/2, 3以上=確定（本家ポケモンの急所ランク仕様に準拠）。
-  const HIGH_CRIT_MOVE_IDS = [23, 125, 152, 163, 182, 183, 204, 406, 264, 266, 281, 303, 328];
-  let critRank = 0;
-  if (attacker.ability === ABILITY.KYOUUN) critRank += 1;
-  if (HIGH_CRIT_MOVE_IDS.includes(move.id)) critRank += 1;
-  const CRIT_CHANCE_BY_RANK = [1 / 16, 1 / 8, 1 / 2, 1];
-  const critChance = CRIT_CHANCE_BY_RANK[Math.min(critRank, 3)];
+  let critChance = 1 / 16;
+  if (attacker.ability === ABILITY.KYOUUN) critChance = 1 / 8;
   const isCrit = defender.ability === ABILITY.KABUTO_ARMOR ? false : Math.random() < critChance;
 
   let effAtk = isCrit && atkRank < 0 ? atkStat : atkStat * rankMultiplier(atkRank);
@@ -843,10 +835,10 @@ function calcDamage(attacker, defender, move, logFn) {
 
   let weatherMult = 1.0;
   if (battleField.weather === 'sun') {
-    if (move.type === 'fire') weatherMult = 1.3;
+    if (move.type === 'fire') weatherMult = 1.5;
     else if (move.type === 'water') weatherMult = 0.5;
   } else if (battleField.weather === 'rain') {
-    if (move.type === 'water') weatherMult = 1.3;
+    if (move.type === 'water') weatherMult = 1.5;
     else if (move.type === 'fire') weatherMult = 0.5;
   } else if (battleField.weather === 'starrysky') {
     if (move.type === 'ghost' || move.type === 'psychic' || move.type === 'steel') weatherMult = 1.3;
@@ -1018,20 +1010,12 @@ function checkCanMove(poke, logFn) {
   }
   if (poke.confuseTurns > 0) {
     poke.confuseTurns--;
-    if (poke.confuseTurns <= 0) {
-      logFn(`${poke.species.name}の混乱がなおった！`);
-      // 混乱が治ったこのターンは自傷判定なしで通常の行動に移る（原作準拠）。
-    } else {
-      const selfHitThisTurn = rand(1, 100) <= 33;
-      if (!selfHitThisTurn) {
-        logFn(`${poke.species.name}は混乱している！`);
-      } else {
-        const selfDmg = Math.max(1, Math.floor(poke.stats.atk / 8));
-        poke.currentHp = Math.max(0, poke.currentHp - selfDmg);
-        logFn(`${poke.species.name}は混乱して自分を攻撃した！`, { hit: poke.side });
-        if (poke.currentHp <= 0) { poke.fainted = true; logFn(`${poke.species.name}は倒れた！`, { faint: poke.side }); }
-        return false;
-      }
+    if (rand(1, 100) <= 33) {
+      const selfDmg = Math.max(1, Math.floor(poke.stats.atk / 8));
+      poke.currentHp = Math.max(0, poke.currentHp - selfDmg);
+      logFn(`${poke.species.name}は混乱して自分を攻撃した！`, { hit: poke.side });
+      if (poke.currentHp <= 0) { poke.fainted = true; logFn(`${poke.species.name}は倒れた！`, { faint: poke.side }); }
+      return false;
     }
   }
   return true;
@@ -1117,6 +1101,7 @@ function applyHazardsOnSwitchIn(poke, side, logFn) {
 
 function applyEndOfTurnStatus(poke, logFn) {
   if (poke.fainted) return;
+  const hpBeforeEot = poke.currentHp;
 
   // バインドダメージ
   if (poke.bindTurns > 0) {
@@ -1165,7 +1150,12 @@ function applyEndOfTurnStatus(poke, logFn) {
   }
   if (poke.currentHp <= 0) { poke.currentHp = 0; poke.fainted = true; logFn(`${poke.species.name}は倒れた！`, { faint: poke.side }); }
   checkAndTriggerFundo(poke, logFn);
-  applyDamageTakenEffects(poke, logFn);
+  // じきゅうりょく等「ダメージを受けた時」の特性は、このターン終了処理で
+  // 実際にHPが減っていた場合のみ発動させる（バインド／毒／やけど／うつせみ等）。
+  // 何もダメージが発生していないのに毎ターン発動してしまうバグの修正。
+  if (poke.currentHp < hpBeforeEot) {
+    applyDamageTakenEffects(poke, logFn);
+  }
   applyMurakke(poke, logFn);
   applyKasoku(poke, logFn);
 
@@ -1216,17 +1206,14 @@ function checkAndTriggerFundo(poke, logFn) {
 }
 
 // ---- ダメージを受けたときの特性 ----
-// isPhysicalMoveHit: 相手の直接の「物理技」を受けてこの関数が呼ばれた場合のみ true。
-// 状態異常ダメージ・設置技・天候ダメージ・攻撃側自身への呼び出しでは false（省略時）にすること。
-// くだけるよろい／じきゅうりょくは「物理技を受けた時」限定の特性のため、ここで判定する。
-function applyDamageTakenEffects(poke, logFn, isPhysicalMoveHit) {
+function applyDamageTakenEffects(poke, logFn) {
   if (!poke || poke.fainted) return;
-  if (poke.ability === ABILITY.JIKYUURYOKU && isPhysicalMoveHit) {
+  if (poke.ability === ABILITY.JIKYUURYOKU) {
     const rankData = [100, 0, 1, 0, 0, 0, 0, 0];
     applyRankChange(poke, rankData, logFn);
     logFn(`${poke.species.name}のじきゅうりょくが発動！`);
   }
-  if (poke.ability === ABILITY.KUDAKERU_YOROI && isPhysicalMoveHit) {
+  if (poke.ability === ABILITY.KUDAKERU_YOROI) {
     const rankData = [100, 0, -1, 0, 0, 2, 0, 0];
     applyRankChange(poke, rankData, logFn);
     logFn(`${poke.species.name}のくだけるよろいが発動！`);
@@ -1356,7 +1343,7 @@ function executeMultiHit(attacker, defender, move, logFn) {
 
     defender.currentHp = Math.max(0, defender.currentHp - damage);
     if (survivedByGanjou) defender.currentHp = 1;
-    logFn(`${defender.species.name}に${damage}のダメージ！`, { hit: defender.side, typeMult, moveType: move.type });
+    logFn(`${defender.species.name}に${damage}のダメージ！`, { hit: defender.side, typeMult, moveType: move.type, movePower: power, moveId: move.id });
     if (isCrit) logFn('急所に当たった！');
     if (typeMult > 1) logFn('効果は抜群だ！');
     else if (typeMult < 1) logFn('効果は今ひとつのようだ…');
@@ -1453,6 +1440,11 @@ function calcVariablePower(moveId, currentHp, maxHp) {
 
 // ---- 1ターンの技実行 ----
 function executeMove(attacker, defender, move, logFn) {
+  // じきゅうりょく等「ダメージを受けた時」の特性を、このexecuteMove内で実際に
+  // ダメージを受けた側だけに正しく発動させるため、開始時点のHPを記録しておく。
+  const attackerHpAtMoveStart = attacker.currentHp;
+  const defenderHpAtMoveStart = defender.currentHp;
+
   // ---- マジックミラー ----
   if (defender.ability === ABILITY.MAGIC_MIRROR && move.category === 'status' && attacker !== defender) {
     logFn(`${defender.species.name}のマジックミラーが発動！${attacker.species.name}に跳ね返した！`);
@@ -1502,25 +1494,6 @@ function executeMove(attacker, defender, move, logFn) {
   // （アンコール・ひややかパンチ用）。個別分岐でreturnする変化技（リフレクター等）も含めて
   // ここで一元的に記録し、途中の各処理で上書きされても同じ値が入るだけなので問題ない。
   attacker.lastUsedMoveId = move.id;
-
-  // ---- まもる ----
-  if (move.id === 2019) {
-    // 連続で使うと成功率が下がる（原作準拠）: 1回目100%, 2回目33%, 3回目11%...(1/3ずつ)
-    const successRate = attacker.protectStreak > 0 ? Math.pow(1 / 3, attacker.protectStreak) : 1;
-    if (rand(1, 100) <= Math.round(successRate * 100)) {
-      attacker.protecting = true;
-      attacker.protectStreak += 1;
-      logFn(`${attacker.species.name}は身を守った！`);
-    } else {
-      attacker.protectStreak = 0;
-      logFn(`しかし失敗した！`);
-    }
-    return;
-  }
-  // まもる以外の技を使ったら連続成功カウントはリセットする
-  if (move.id !== 2019) {
-    attacker.protectStreak = 0;
-  }
 
   // ---- のろわれボディ ----
   if (defender.ability === ABILITY.NOROWARE_BODY && move.category === 'physical' && !defender.fainted) {
@@ -1573,13 +1546,12 @@ function executeMove(attacker, defender, move, logFn) {
     return;
   }
 
-  // ---- であいがしら：場に出た1ターン目のみ使用可能（isDeaigashiraLockedFor/chooseCpuActionでturnsOnFieldにより判定） ----
+  // ---- であいがしら：使用したら次のターンからロック（交代で解除） ----
+  if (move.id === 4) {
+    attacker.deaigashiraLocked = true;
+  }
 
   // ---- げきりん：強制連続使用の管理 ----
-  // ここでは「今回の攻撃で強制ターンが終わるかどうか」だけを判定する。
-  // 混乱の付与自体は selfStatus の共通処理（攻撃が完全に終わった後）に任せることで、
-  // 「攻撃→ダメージ確定→その後に混乱」という原作どおりの順序になる。
-  let gekirinJustEnded = false;
   if (move.id === 43) {
     if (attacker.gekirinTurns <= 0) {
       // 新規発動：2〜3ターン継続（本ターンを含む）
@@ -1589,7 +1561,8 @@ function executeMove(attacker, defender, move, logFn) {
     attacker.gekirinTurns--;
     if (attacker.gekirinTurns <= 0) {
       attacker.gekirinMoveId = null;
-      gekirinJustEnded = true;
+      // 強制ターン終了後、自分が混乱する
+      applyStatus(attacker, [100, STATUS.CONFUSE], logFn);
     }
   }
 
@@ -1614,14 +1587,18 @@ function executeMove(attacker, defender, move, logFn) {
     logFn(`${attacker.species.name}はきりばらいで場を払った！`);
     return;
   }
-  if (move.id === 180) { // テラーバインド：相手のランダムな技を1つ封じる（プレイヤー・CPU両方で機能）
-    const unlockable = defender.moves.filter(m => m && !m.locked);
-    if (unlockable.length > 0) {
-      const target = pick(unlockable);
-      target.locked = true;
-      logFn(`${defender.species.name}の${target.name}が封じられた！`);
+  if (move.id === 180) { // テラーバインド
+    if (attacker.side === 'player' && defender.side === 'cpu') {
+      const unlockable = defender.moves.filter(m => m && !m.locked);
+      if (unlockable.length > 0) {
+        const target = pick(unlockable);
+        target.locked = true;
+        logFn(`${defender.species.name}の${target.name}が封じられた！`);
+      } else {
+        logFn(`しかし、全ての技が既に封じられている！`);
+      }
     } else {
-      logFn(`しかし、全ての技が既に封じられている！`);
+      logFn(`テラーバインドはNPCには効果がないようだ…`);
     }
     return;
   }
@@ -1721,17 +1698,26 @@ function executeMove(attacker, defender, move, logFn) {
     // ひややかパンチは物理攻撃なので、ダメージ計算に進む
   }
 
-  // ---- インフェルノ (480) ----
+  // ---- インフェルノ (480) / メイルストローム (483) / イルミンスール (484) ----
+  // 使用後、次のターンだけそのタイプの技が使えなくなる（交代で解除、2ターン後には自然解除）
   if (move.id === 480) {
-    // 使用後、次のターンにほのおタイプをロック
     attacker.typeLockTurns = 2;
     attacker.typeLockType = 'fire';
     logFn(`${attacker.species.name}は次のターン、ほのおタイプの技が使えなくなる！`);
     // ダメージ計算は通常通り
   }
-
-  // ---- メイルストローム (483) / イルミンスール (484) ----
-  // 特別な処理はなし（強力な水/草技として動作）
+  if (move.id === 483) {
+    attacker.typeLockTurns = 2;
+    attacker.typeLockType = 'water';
+    logFn(`${attacker.species.name}は次のターン、みずタイプの技が使えなくなる！`);
+    // ダメージ計算は通常通り
+  }
+  if (move.id === 484) {
+    attacker.typeLockTurns = 2;
+    attacker.typeLockType = 'grass';
+    logFn(`${attacker.species.name}は次のターン、くさタイプの技が使えなくなる！`);
+    // ダメージ計算は通常通り
+  }
 
   // ---- 威力変動技 ----
   let modifiedPower = move.power;
@@ -1797,6 +1783,8 @@ function executeMove(attacker, defender, move, logFn) {
 
   // ========== 連続技チェック ==========
   if (MULTI_HIT_MOVES[move.id]) {
+    const attackerHpBeforeMulti = attacker.currentHp;
+    const defenderHpBeforeMulti = defender.currentHp;
     const handled = executeMultiHit(attacker, defender, move, logFn);
     if (handled) {
       if (defender.fainted && !attacker.fainted && defender.ability === ABILITY.YUUBABU) {
@@ -1826,8 +1814,14 @@ function executeMove(attacker, defender, move, logFn) {
       }
       checkAndTriggerFundo(attacker, logFn);
       checkAndTriggerFundo(defender, logFn);
-      applyDamageTakenEffects(attacker, logFn, false);
-      applyDamageTakenEffects(defender, logFn, move.category === 'physical');
+      // じきゅうりょく等は、実際にHPが減った側でのみ発動させる
+      // （ゆうばくの反動でattackerが減った場合はattacker側も対象になる）。
+      if (attacker.currentHp < attackerHpBeforeMulti) {
+        applyDamageTakenEffects(attacker, logFn);
+      }
+      if (defender.currentHp < defenderHpBeforeMulti) {
+        applyDamageTakenEffects(defender, logFn);
+      }
       // 技を使った本人（attacker）のlastUsedMoveIdを記録（アンコール・ひややかパンチ用）
       attacker.lastUsedMoveId = move.id;
       return;
@@ -1902,11 +1896,6 @@ function executeMove(attacker, defender, move, logFn) {
       logFn(`しかし当たらなかった！`);
       return;
     }
-    // ---- まもるによるブロック（相手に効果のある変化技のみ） ----
-    if (attacker !== defender && defender.protecting && (move.oppRank || move.oppStatus)) {
-      logFn(`${defender.species.name}は攻撃をまもった！`);
-      return;
-    }
     if (move.id === 318 || move.id === 495) {
       setHazard(move.id, attacker.side, logFn);
       if (!suppressSecondary) applyRankChange(attacker, move.selfRank, logFn);
@@ -1946,17 +1935,6 @@ function executeMove(attacker, defender, move, logFn) {
       logFn(`${defender.species.name}は挑発された！`);
       return;
     }
-    // ---- じこさいせい・はねやすめ等、drainRatioを最大HP割合の自己回復として使う回復技 ----
-    if (move.power === null && move.drainRatio) {
-      if (attacker.currentHp >= attacker.maxHp) {
-        logFn('しかしHPは満タンだった！');
-        return;
-      }
-      const healAmt = Math.max(1, Math.floor(attacker.maxHp * move.drainRatio));
-      attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + healAmt);
-      logFn(`${attacker.species.name}のHPが回復した！`, { hit: attacker.side });
-      return;
-    }
 
     if (!suppressSecondary) applyRankChange(attacker, move.selfRank, logFn);
     if (!suppressSecondary) applyRankChange(defender, move.oppRank, logFn);
@@ -1975,12 +1953,6 @@ function executeMove(attacker, defender, move, logFn) {
       logFn(`しかし${defender.species.name}には当たらなかった！`);
       return;
     }
-  }
-
-  // ---- まもるによるブロック ----
-  if (attacker !== defender && defender.protecting) {
-    logFn(`${defender.species.name}は攻撃をまもった！`);
-    return;
   }
 
   // タイプ吸収系（実効タイプを使用）
@@ -2030,7 +2002,7 @@ function executeMove(attacker, defender, move, logFn) {
   defender.currentHp = Math.max(0, defender.currentHp - damage);
   if (survivedByGanjou) defender.currentHp = 1;
   const actualDamageDealt = hpBeforeDamage - defender.currentHp;
-  logFn(`${defender.species.name}に${damage}のダメージ！`, { hit: defender.side, typeMult, moveType: move.type });
+  logFn(`${defender.species.name}に${damage}のダメージ！`, { hit: defender.side, typeMult, moveType: move.type, movePower: modifiedPower, moveId: move.id });
   if (isCrit) logFn('急所に当たった！');
   if (typeMult > 1) logFn('効果は抜群だ！');
   else if (typeMult < 1) logFn('効果は今ひとつのようだ…');
@@ -2102,16 +2074,6 @@ function executeMove(attacker, defender, move, logFn) {
     logFn(`天気が晴れになった！`);
   }
 
-  // ---- きたかぜたいよう：天候を「ひでり（ひざしがつよい）」にする ----
-  if (move.id === 136 && battleField.weather !== 'sun') {
-    setWeather('sun', 5, logFn);
-  }
-
-  // ---- ゆうだち：天候を「あめ」にする ----
-  if (move.id === 358 && battleField.weather !== 'rain') {
-    setWeather('rain', 5, logFn);
-  }
-
   if (attacker.currentHp <= 0) {
     attacker.fainted = true;
     logFn(`${attacker.species.name}は倒れた！`, { faint: attacker.side });
@@ -2120,14 +2082,9 @@ function executeMove(attacker, defender, move, logFn) {
   if (defender.currentHp <= 0) {
     defender.fainted = true;
     logFn(`${defender.species.name}は倒れた！`, { faint: defender.side });
-    // 相手を倒した場合でも、技自体は命中しているため自分のランク変化（selfRank）や
-    // 自分への状態異常（selfStatus：朧一閃の眠り等）は発動する。
-    // げきりんは強制ターンが終わったときだけ混乱を付与する。
+    // 相手を倒した場合でも、技自体は命中しているため自分のランク変化（selfRank）は発動する。
     if (!attacker.fainted && !suppressSecondary) {
       applyRankChange(attacker, move.selfRank, logFn);
-      if (move.id !== 43 || gekirinJustEnded) {
-        applyStatus(attacker, move.selfStatus, logFn);
-      }
     }
     if (defender.ability === ABILITY.YUUBABU && !attacker.fainted) {
       if (!battleField.chemicalGasActive || defender.ability === ABILITY.KAGAKUHENKAGASU) {
@@ -2148,13 +2105,6 @@ function executeMove(attacker, defender, move, logFn) {
       applyRankChange(defender, move.oppRank, logFn);
       applyRankChange(attacker, move.selfRank, logFn);
       applyStatus(defender, move.oppStatus, logFn, attacker.ability);
-      // 朧一閃・げきりんなど「攻撃後に自分が状態異常になる」技のselfStatusを適用。
-      // 攻撃が完全に終わった後（ダメージ確定・追加効果の後）に発動させることで、
-      // 原作同様「技が成功してから自分に効果が返る」順序になる。
-      // げきりんは強制ターンが終わったとき（gekirinJustEnded）だけ混乱を付与する。
-      if (!attacker.fainted && (move.id !== 43 || gekirinJustEnded)) {
-        applyStatus(attacker, move.selfStatus, logFn);
-      }
     }
     if (move.category === 'physical' && !defender.fainted) {
       if (defender.ability === ABILITY.SEIDENKI && attacker.status === STATUS.NONE && rand(1, 100) <= 30) {
@@ -2191,8 +2141,14 @@ function executeMove(attacker, defender, move, logFn) {
 
   checkAndTriggerFundo(attacker, logFn);
   checkAndTriggerFundo(defender, logFn);
-  applyDamageTakenEffects(attacker, logFn, false);
-  applyDamageTakenEffects(defender, logFn, move.category === 'physical');
+  // じきゅうりょく等は、このexecuteMove内で実際にHPが減った側でのみ発動させる
+  // （攻撃しただけの側で毎回誤発動していたバグの修正）。
+  if (attacker.currentHp < attackerHpAtMoveStart) {
+    applyDamageTakenEffects(attacker, logFn);
+  }
+  if (defender.currentHp < defenderHpAtMoveStart) {
+    applyDamageTakenEffects(defender, logFn);
+  }
 
   // 技を使った本人（attacker）のlastUsedMoveIdを記録（アンコール・ひややかパンチ用）
   attacker.lastUsedMoveId = move.id;
@@ -2261,11 +2217,7 @@ async function runTurn(playerAction, cpuAction, playerPoke, cpuPoke, logFn, onIm
   if (!playerPoke.fainted) playerPoke.flinch = false;
   if (!cpuPoke.fainted) cpuPoke.flinch = false;
 
-  // まもるの効果は自分の次の行動まで（このターン限り）。ターン終了時に解除する。
-  if (!playerPoke.fainted) playerPoke.protecting = false;
-  if (!cpuPoke.fainted) cpuPoke.protecting = false;
-
-  [playerPoke, cpuPoke].forEach((p) => { if (!p.fainted) { applyEndOfTurnStatus(p, logFn); p.turnsOnField++; } });
+  [playerPoke, cpuPoke].forEach((p) => { if (!p.fainted) applyEndOfTurnStatus(p, logFn); });
   const alivePokes = [playerPoke, cpuPoke].filter((p) => !p.fainted);
   if (alivePokes.length > 0) applyEndOfTurnField(alivePokes, logFn);
 }
@@ -2392,8 +2344,7 @@ function weatherTerrainScoreMult(moveType, moveId) {
 }
 
 function chooseCpuAction(cpuPoke, playerPoke) {
-  // であいがしらは場に出た1ターン目（turnsOnField === 0）のみ使用可能
-  const usable = cpuPoke.moves.filter((m) => m.pp > 0 && !m.locked && !(m.id === 4 && (cpuPoke.turnsOnField || 0) > 0));
+  const usable = cpuPoke.moves.filter((m) => m.pp > 0 && !m.locked && !(m.id === 4 && cpuPoke.deaigashiraLocked));
   if (usable.length === 0) return { type: 'move', move: cpuPoke.moves.find(m => m.pp > 0) || cpuPoke.moves[0] };
 
   // げきりん強制連続使用
@@ -2678,10 +2629,6 @@ function chooseTrainerAttack(attacker, defender, usableMoves) {
     else if ([496, 502].includes(move.id)) {
       score += battleField.weather === 'rain' ? 4 : -4;
     }
-    // きたかぜたいよう(136)：天候がひでり(sun)でなければ、天候変化を狙って少し優先
-    else if (move.id === 136 && battleField.weather !== 'sun') { score += 2; }
-    // ゆうだち(358)：天候があめ(rain)でなければ、天候変化を狙って少し優先
-    else if (move.id === 358 && battleField.weather !== 'rain') { score += 2; }
     // ゆびをふる(479)：自分の持ち技に相手への有効打(等倍以上)が一つも無い時、優先的に使う
     else if (move.id === 479) {
       const noEffectiveHit = usableMoves.every((other) => {

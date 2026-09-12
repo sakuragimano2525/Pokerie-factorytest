@@ -16,6 +16,15 @@ function typeIconHtml(type) {
   return `<img src="./type${id}.png" alt="" class="move-row-type-icon" onerror="this.style.display='none'">`;
 }
 
+// タイプ名バッジ（アイコン付き）。ポケモンのタイプ表示（ヘッダー・選出/交換カード等）で共通使用する。
+function typeChipHtml(type) {
+  const id = TYPE_ID[type];
+  const iconHtml = id !== undefined
+    ? `<img src="./type${id}.png" alt="" class="type-chip-icon" onerror="this.style.display='none'">`
+    : '';
+  return `<span class="type-chip ${TYPE_CLASS(type)}">${iconHtml}${typeJp(type)}</span>`;
+}
+
 // 状態異常（まひ・やけど等）とこんらんを、両方かかっていれば両方まとめて返す。
 // 例: [{key:'status1', label:'まひ'}, {key:'confuse', label:'こんらん'}]
 function activeStatusBadges(poke) {
@@ -94,15 +103,29 @@ const AssetPreloader = (() => {
     for (let i = 1; i <= 20; i++) preloadAudio(`./${i}.mp3`);
   }
 
+  // マップ背景画像（map1〜map20.png）の事前ロード
+  function preloadMapBackgrounds() {
+    for (let i = 1; i <= 20; i++) preloadImage(`./map${i}.png`);
+  }
+
   function preloadAll() {
     preloadTypeIcons();
     preloadAudioAssets();
+    preloadMapBackgrounds();
     // 種族画像は数が多いので、他の初期化を邪魔しないよう少し遅延して開始
     setTimeout(() => preloadAllSpeciesSprites(), 0);
   }
 
   return { preloadImage, preloadAudio, preloadAll, audioBuffers };
 })();
+
+// バトル開始のたびに、map1〜map20.png からランダムで1枚を背景に設定する
+// （NPC戦・対人戦どちらでも共通。画像は事前ロード済みなのですぐ表示される）
+function setRandomBattleBackground() {
+  const n = 1 + Math.floor(Math.random() * 20);
+  const el = $('battle-field-bg');
+  if (el) el.style.backgroundImage = `url("./map${n}.png")`;
+}
 
 /* ---------------- UIクリック効果音 ---------------- */
 // 連打しても遅延なく鳴らせるよう、複数のAudioインスタンスをプールして使い回す
@@ -382,8 +405,8 @@ function renderTeamCard(poke, idx) {
            onerror="this.replaceWith(makeTeamCardFallback(${poke.speciesId}))">
       <div class="tpc-name">${poke.species.name}</div>
       <div class="tpc-types">
-        <span class="type-chip ${TYPE_CLASS(t1)}">${typeJp(t1)}</span>
-        ${t2 ? `<span class="type-chip ${TYPE_CLASS(t2)}">${typeJp(t2)}</span>` : ''}
+        ${typeChipHtml(t1)}
+        ${t2 ? typeChipHtml(t2) : ''}
       </div>
     </div>
   `;
@@ -431,16 +454,44 @@ function queueMessage(text, after, netMeta) {
       rc: netMeta && netMeta.rankChange ? netMeta.rankChange : null,
       rs: netMeta && netMeta.rankSide ? netMeta.rankSide : null,
       mt: netMeta && netMeta.moveType ? netMeta.moveType : null,
+      mi: netMeta && netMeta.moveId !== undefined ? netMeta.moveId : null,
       turn: netMeta && netMeta.turn ? netMeta.turn : null,
+      wfx: netMeta && netMeta.weatherFx ? netMeta.weatherFx : null,
+      mp: netMeta && netMeta.movePower !== undefined ? netMeta.movePower : null,
       pSnap: pa ? { sid: pa.speciesId, hp: pa.currentHp, mhp: pa.maxHp, st: pa.status || 0, cf: pa.confuseTurns || 0, fainted: !!pa.fainted } : null,
       cSnap: ca ? { sid: ca.speciesId, hp: ca.currentHp, mhp: ca.maxHp, st: ca.status || 0, cf: ca.confuseTurns || 0, fainted: !!ca.fainted } : null,
     });
   }
 }
 
+// ターン区切り（--ターンN--）の直前に表示する、天候・フィールドの残りターン数メッセージ。
+// battleFieldの天候/フィールドが有効な間、毎ターンの区切り前に「あと〇ターン」を知らせる。
+// 天候の継続メッセージには weatherFx を添えて、表示のたびに背景演出も再生させる。
+function getFieldContinueMessages() {
+  const msgs = [];
+  if (battleField.weather && battleField.weather !== 'none' && battleField.weatherTurns > 0) {
+    const name = WEATHER_JP[battleField.weather] || battleField.weather;
+    msgs.push({ text: `${name}が　あと${battleField.weatherTurns}ターン　つづいている！`, weatherFx: battleField.weather });
+  }
+  if (battleField.terrain && battleField.terrain !== 'none' && battleField.terrainTurns > 0) {
+    const name = TERRAIN_JP[battleField.terrain] || battleField.terrain;
+    msgs.push({ text: `${name}が　あと${battleField.terrainTurns}ターン　つづいている！`, weatherFx: null });
+  }
+  return msgs;
+}
+
 // ターン区切り（--ターンN--）をメッセージキューとログ履歴の両方に積む。
-// netMeta.turn を立てて送ることで、ゲスト側でも同じ区切りをログ履歴に残せるようにする。
+// その直前に、天候・フィールドがあと何ターン続きそうかのメッセージも積む。
+// netMeta.turn / netMeta.weatherFx を立てて送ることで、ゲスト側でも同じ区切り・演出を再現する。
 function queueTurnDivider(turnNumber) {
+  getFieldContinueMessages().forEach(({ text: msg, weatherFx }) => {
+    queueMessage(
+      msg,
+      weatherFx ? () => playWeatherEffect(weatherFx) : null,
+      weatherFx ? { weatherFx } : null
+    );
+    pushBattleLogHistory({ text: msg, side: null, kind: 'plain', speciesId: null, shiny: false });
+  });
   const text = `--ターン${turnNumber}--`;
   queueMessage(text, null, { turn: true });
   pushBattleLogHistory({ text, side: null, kind: 'turn', speciesId: null, shiny: false });
@@ -461,13 +512,24 @@ function pushLogLine(text) {
     setTimeout(() => old.remove(), 200);
   }
 }
+// エフェクト用コールバック（rankFlash/playWeatherEffect等）が万一解決しなかった場合に
+// バトル進行自体が完全に止まってしまわないよう、一定時間で強制的に切り上げる安全装置。
+function withTimeout(promise, ms) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    Promise.resolve(promise).then(finish, finish);
+    setTimeout(finish, ms);
+  });
+}
+
 function drainMessages() {
   return new Promise((resolve) => {
     async function showNext() {
       if (msgQueue.length === 0) { resolve(); return; }
       const item = msgQueue.shift();
       pushLogLine(item.text);
-      if (item.after) { try { await item.after(); } catch (e) {} }
+      if (item.after) { try { await withTimeout(item.after(), 4000); } catch (e) {} }
       let done = false;
       const advance = () => {
         if (done) return;
@@ -590,6 +652,140 @@ function playFaint(side) {
   return new Promise((res) => setTimeout(res, 350));
 }
 
+/* ---------------- 天候発動エフェクト ---------------- */
+// ダイヤモンド・パール・プラチナ風に、天候が発動した瞬間に背景演出を出してから
+// 次のメッセージ（--ターンN--等）に進む。はれ（sun）は原作同様に演出なし。
+const WEATHER_FX_DURATION_MS = 1300;
+
+function clearWeatherFxLayer() {
+  const layer = $('weather-fx-layer');
+  if (!layer) return;
+  layer.className = 'weather-fx-layer';
+  layer.innerHTML = '';
+}
+
+// DocumentFragmentにまとめて追加してから一度だけDOMへ挿入することで、
+// パーティクルを多数生成してもレイアウト再計算が1回で済むようにする。
+function buildRainFx(layer) {
+  const frag = document.createDocumentFragment();
+  const count = 18;
+  for (let i = 0; i < count; i++) {
+    const drop = document.createElement('div');
+    drop.className = 'wfx-rain-drop';
+    drop.style.left = Math.round(Math.random() * 100) + '%';
+    drop.style.animationDuration = (0.6 + Math.random() * 0.4).toFixed(2) + 's';
+    drop.style.animationDelay = (Math.random() * -1).toFixed(2) + 's';
+    frag.appendChild(drop);
+  }
+  layer.appendChild(frag);
+}
+
+function buildSandFx(layer) {
+  const frag = document.createDocumentFragment();
+  const count = 7;
+  for (let i = 0; i < count; i++) {
+    const band = document.createElement('div');
+    band.className = 'wfx-sand-band';
+    band.style.top = Math.round(Math.random() * 100) + '%';
+    band.style.animationDuration = (0.8 + Math.random() * 0.5).toFixed(2) + 's';
+    band.style.animationDelay = (Math.random() * -0.8).toFixed(2) + 's';
+    frag.appendChild(band);
+  }
+  layer.appendChild(frag);
+}
+
+function buildSnowFx(layer) {
+  const frag = document.createDocumentFragment();
+  const count = 14;
+  for (let i = 0; i < count; i++) {
+    const flake = document.createElement('div');
+    flake.className = 'wfx-snow-flake';
+    const size = 3 + Math.random() * 3;
+    flake.style.width = size.toFixed(1) + 'px';
+    flake.style.height = size.toFixed(1) + 'px';
+    flake.style.left = Math.round(Math.random() * 100) + '%';
+    flake.style.animationDuration = (2.4 + Math.random() * 1.2).toFixed(2) + 's';
+    flake.style.animationDelay = (Math.random() * -2).toFixed(2) + 's';
+    frag.appendChild(flake);
+  }
+  layer.appendChild(frag);
+}
+
+function buildSunFx(layer) {
+  const frag = document.createDocumentFragment();
+  const glow = document.createElement('div');
+  glow.className = 'wfx-sun-glow';
+  frag.appendChild(glow);
+  const count = 8;
+  for (let i = 0; i < count; i++) {
+    const ray = document.createElement('div');
+    ray.className = 'wfx-sun-ray';
+    ray.style.transform = `rotate(${(i * (360 / count)) + Math.random() * 10}deg)`;
+    ray.style.animationDuration = (0.9 + Math.random() * 0.6).toFixed(2) + 's';
+    ray.style.animationDelay = (Math.random() * -1).toFixed(2) + 's';
+    frag.appendChild(ray);
+  }
+  layer.appendChild(frag);
+}
+
+function buildStarrySkyFx(layer) {
+  const frag = document.createDocumentFragment();
+  const count = 14;
+  for (let i = 0; i < count; i++) {
+    const star = document.createElement('div');
+    star.className = 'wfx-star';
+    const size = 1.5 + Math.random() * 2;
+    star.style.width = size.toFixed(1) + 'px';
+    star.style.height = size.toFixed(1) + 'px';
+    star.style.left = Math.round(Math.random() * 100) + '%';
+    star.style.top = Math.round(Math.random() * 65) + '%';
+    star.style.animationDuration = (1.2 + Math.random() * 1.2).toFixed(2) + 's';
+    star.style.animationDelay = (Math.random() * -1.5).toFixed(2) + 's';
+    frag.appendChild(star);
+  }
+  layer.appendChild(frag);
+}
+
+// key: 'sun' | 'rain' | 'sand' | 'snow' | 'starrysky'
+// 万一DOM操作やタイマーで想定外のことが起きても、呼び出し元(drainMessages等)は
+// withTimeout()で保護されているため、ここで例外が出てもバトル進行自体は止まらない。
+function playWeatherEffect(key) {
+  if (!key) return Promise.resolve();
+
+  try {
+    const layer = $('weather-fx-layer');
+    if (!layer) return Promise.resolve();
+
+    clearWeatherFxLayer();
+
+    const builders = {
+      sun: () => { layer.classList.add('wfx-bg-sun'); buildSunFx(layer); },
+      rain: () => { layer.classList.add('wfx-bg-rain'); buildRainFx(layer); },
+      sand: () => { layer.classList.add('wfx-bg-sand'); buildSandFx(layer); },
+      snow: () => { layer.classList.add('wfx-bg-snow'); buildSnowFx(layer); },
+      starrysky: () => { layer.classList.add('wfx-bg-starrysky'); buildStarrySkyFx(layer); },
+    };
+    const build = builders[key];
+    if (!build) return Promise.resolve();
+    build();
+
+    // フェードイン（次フレームでクラス付与してtransitionを効かせる）
+    requestAnimationFrame(() => { layer.classList.add('show'); });
+
+    return new Promise((res) => {
+      setTimeout(() => {
+        try {
+          layer.classList.remove('show');
+          setTimeout(() => { try { clearWeatherFxLayer(); } catch (e) {} }, 400);
+        } catch (e) {}
+        res();
+      }, WEATHER_FX_DURATION_MS);
+    });
+  } catch (e) {
+    return Promise.resolve();
+  }
+}
+
 // タイプ技の簡易エフェクト（1:むし〜12:じめん、+こおり）。
 // sprite-slot（position:relative）の中に一時的なオーバーレイを差し込み、
 // アニメーション終了後に自動で取り除く。
@@ -616,14 +812,16 @@ const TYPE_EFFECT_CONFIG = {
   shine:    { emoji: '🌟', cls: 'tfx-shine' },
 };
 const TYPE_EFFECT_DURATION_MS = 420;
-function playTypeEffect(side, moveType) {
+// 威力がこの値を超える技は、より豪華・派手な演出（big版）で再生する。
+const BIG_MOVE_POWER_THRESHOLD = 90;
+function playTypeEffect(side, moveType, big) {
   const wrap = $(side === 'opp' ? 'sprite-opp-wrap' : 'sprite-self-wrap');
   if (!wrap) return Promise.resolve();
   // むし〜じめん（+こおり）は本格的なCanvasパーティクル演出。
   // 未対応タイプ（sound/shineなど演出専用の疑似タイプ）は
   // 従来の絵文字オーバーレイにフォールバックする。
   if (window.TypeFX && window.TypeFX.SUPPORTED_TYPES.indexOf(moveType) !== -1) {
-    const p = window.TypeFX.play(wrap, moveType);
+    const p = window.TypeFX.play(wrap, moveType, !!big);
     if (p) return p;
   }
   const config = TYPE_EFFECT_CONFIG[moveType];
@@ -638,6 +836,16 @@ function playTypeEffect(side, moveType) {
       res();
     }, TYPE_EFFECT_DURATION_MS);
   });
+}
+
+// インフェルノ(480)／メイルストローム(483)／イルミンスール(484)専用の
+// フルスクリーン演出。スプライト枠に縛られず戦闘画面全体（battle-field）を使う。
+const SPECIAL_MOVE_FX_IDS = [480, 483, 484];
+function playSpecialMoveEffect(moveId) {
+  const wrap = $('special-fx-layer');
+  if (!wrap || !window.TypeFX || !window.TypeFX.playSpecial) return Promise.resolve();
+  const p = window.TypeFX.playSpecial(wrap, moveId);
+  return p || Promise.resolve();
 }
 
 /* ---------------- Command panel rendering ---------------- */
@@ -699,13 +907,14 @@ function renderMoveMenu() {
   const moveButtons = poke.moves.map((m, idx) => {
     const deaiLocked = isDeaigashiraLockedFor(poke, m);
     const gekirinLocked = gekirinForced && m.id !== gekirinForced.id;
-    const disabled = m.pp <= 0 || m.locked || deaiLocked || gekirinLocked;
+    const typeLocked = poke.typeLockTurns > 0 && poke.typeLockType === m.type;
+    const disabled = m.pp <= 0 || m.locked || deaiLocked || gekirinLocked || typeLocked;
     return `
     <button class="neu-btn cmd-btn move-row ${TYPE_CLASS(m.type)}-edge" data-idx="${idx}" ${disabled ? 'disabled' : ''}>
       ${typeIconHtml(m.type)}
       <span class="move-row-name">${m.name}</span>
       <span class="move-row-pp">PP ${m.pp}/${m.maxPp}</span>
-      ${(m.locked || deaiLocked) ? '<span style="color:#ff5d5d;font-size:10px;font-weight:900;">🔒</span>' : ''}
+      ${(m.locked || deaiLocked || typeLocked) ? '<span style="color:#ff5d5d;font-size:10px;font-weight:900;">🔒</span>' : ''}
     </button>
   `;
   }).join('');
@@ -1158,14 +1367,14 @@ function getAbilityInfo(poke) {
   }
   return null;
 }
-function getStatBlock(poke) {
+function getStatBlock(poke, order) {
   const stats = poke.stats || (poke.species && poke.species.baseStats);
   const evsRaw = poke.evs || {};
-  const order = ['hp', 'spe', 'atk', 'def', 'spa', 'spd'];
+  const statOrder = order || ['hp', 'spe', 'atk', 'def', 'spa', 'spd'];
   const evs = Array.isArray(evsRaw)
     ? { hp: evsRaw[0], atk: evsRaw[1], def: evsRaw[2], spa: evsRaw[3], spd: evsRaw[4], spe: evsRaw[5] }
     : evsRaw;
-  return order.map((key) => ({
+  return statOrder.map((key) => ({
     key,
     label: JA_STAT_NAME[key],
     value: stats && stats[key] != null ? stats[key] : null,
@@ -1201,9 +1410,7 @@ function partyListItemHtml(p, idx) {
 
 function partyDetailHtml(p) {
   const effectiveTypes = getEffectiveTypesForDisplay(p);
-  const typeDisplay = effectiveTypes.map(t => `
-    <span class="type-chip ${TYPE_CLASS(t)}">${typeJp(t)}</span>
-  `).join('');
+  const typeDisplay = effectiveTypes.map(t => typeChipHtml(t)).join('');
   const movesHtml = p.moves.map((m) => `
     <div class="pd-move-row ${TYPE_CLASS(m.type)}-edge ${m.locked ? 'pd-move-locked' : ''}" style="${m.locked ? 'opacity:0.4;border-left-color:#ff5d5d;' : ''}">
       ${typeIconHtml(m.type)}
@@ -1248,6 +1455,58 @@ function partyDetailHtml(p) {
         ${ability && ability.desc ? `<div class="pd-ability-desc">${ability.desc}</div>` : ''}
       </div>
       <div class="pd-stats">${statsHtml}</div>
+    </div>
+  `;
+}
+
+// 選出/交換時の「詳細を見る」用：特性を横幅いっぱいに、わざを2列、
+// ステータスをわざの隣に配置することで、特性の説明が長くてもスクロールなしで収まるレイアウト。
+function partyDetailHtmlWide(p) {
+  const effectiveTypes = getEffectiveTypesForDisplay(p);
+  const typeDisplay = effectiveTypes.map(t => typeChipHtml(t)).join('');
+  const movesHtml = p.moves.map((m) => `
+    <div class="pdw-move-row ${TYPE_CLASS(m.type)}-edge ${m.locked ? 'pd-move-locked' : ''}" style="${m.locked ? 'opacity:0.4;border-left-color:#ff5d5d;' : ''}">
+      ${typeIconHtml(m.type)}
+      <span class="pdw-move-name">${m.name}${m.locked ? ' 🔒' : ''}</span>
+      <span class="pdw-move-pp">PP ${m.pp}/${m.maxPp}</span>
+    </div>
+  `).join('');
+  const ability = getAbilityInfo(p);
+  const statBlock = getStatBlock(p, ['hp', 'atk', 'def', 'spa', 'spd', 'spe']);
+  const statsHtml = statBlock.map((s) => `
+    <div class="pdw-stat-row">
+      <span class="pdw-stat-name">${s.label}</span>
+      <span class="pdw-stat-values">
+        <span class="pdw-stat-value">${s.value != null ? s.value : '—'}</span>${s.ev != null ? `<span class="pdw-stat-ev">${s.ev}</span>` : ''}
+      </span>
+    </div>
+  `).join('');
+
+  let typeChangeInfo = '';
+  if (p.changedType) {
+    typeChangeInfo = `<div style="font-size:11px;font-weight:700;color:var(--accent-b);">タイプ: ${typeJp(p.changedType)}（変化）</div>`;
+  }
+  if (p.removedTypes && p.removedTypes.length > 0) {
+    typeChangeInfo += `<div style="font-size:11px;font-weight:700;color:#ff5d5d;">タイプ消失: ${p.removedTypes.map(t => typeJp(t)).join('、')}</div>`;
+  }
+
+  return `
+    <div class="pdw-header">
+      <span class="pdw-name">${p.species.name}</span>
+      <span class="pdw-lv">Lv${p.level}</span>
+      <div class="pdw-types">
+        ${typeDisplay}
+      </div>
+    </div>
+    ${typeChangeInfo}
+    <div class="pdw-ability-box">
+      <span class="pdw-ability-label">特性</span>
+      <span class="pdw-ability-name">${ability ? ability.name : '—'}</span>
+      ${ability && ability.desc ? `<div class="pdw-ability-desc">${ability.desc}</div>` : ''}
+    </div>
+    <div class="pdw-body">
+      <div class="pdw-moves">${movesHtml}</div>
+      <div class="pdw-stats">${statsHtml}</div>
     </div>
   `;
 }
@@ -1423,24 +1682,54 @@ function makeLogFn() {
     pushBattleLogHistory({ text, side: logSide, kind: logKind, speciesId: logSpeciesId, shiny: logShiny });
 
     const moveType = meta && meta.moveType ? meta.moveType : null;
+    const moveId = meta && meta.moveId !== undefined ? meta.moveId : null;
+    const weatherFx = meta && meta.weatherFx ? meta.weatherFx : null;
+    // 威力90超の技は、より豪華・派手な演出（big版）で再生する。
+    const isBigMove = !!(meta && meta.movePower !== undefined && meta.movePower !== null && meta.movePower > BIG_MOVE_POWER_THRESHOLD);
+    // インフェルノ／メイルストローム／イルミンスールは通常のbig版よりさらに特別な専用演出を使う。
+    const isSpecialMove = SPECIAL_MOVE_FX_IDS.indexOf(moveId) !== -1;
 
     queueMessage(text, async () => {
       if (uiSide) {
-        // タイプ別の簡易エフェクト → 効果音 → ヒット演出 → HP反映、の順で見せる
-        if (moveType) {
-          await playTypeEffect(uiSide, moveType);
-        }
-        if (meta && meta.typeMult !== undefined) {
-          playTypeEffectSound(meta.typeMult);
-        }
-        await flashHit(uiSide);
         const poke = meta.hit === 'player' ? state.playerActive : state.cpuActive;
-        updateHud(poke, uiSide, hpSnapshot);
+        if (isSpecialMove) {
+          // 専用の全画面エフェクト：スプライト枠に縛られない派手な演出。
+          await playSpecialMoveEffect(moveId);
+          if (meta && meta.typeMult !== undefined) {
+            playTypeEffectSound(meta.typeMult);
+          }
+          await flashHit(uiSide);
+          updateHud(poke, uiSide, hpSnapshot);
+        } else if (isBigMove && moveType) {
+          // 豪華演出：ちょっと長い派手なエフェクトを最後まで見せてから、
+          // 効果音とダメージ反映（ヒット演出＋HP更新）を同時に出す。
+          await playTypeEffect(uiSide, moveType, true);
+          if (meta && meta.typeMult !== undefined) {
+            playTypeEffectSound(meta.typeMult);
+          }
+          await flashHit(uiSide);
+          updateHud(poke, uiSide, hpSnapshot);
+        } else {
+          // 通常演出：タイプ別の簡易エフェクト → 効果音 → ヒット演出 → HP反映、の順で見せる
+          if (moveType) {
+            await playTypeEffect(uiSide, moveType, false);
+          }
+          if (meta && meta.typeMult !== undefined) {
+            playTypeEffectSound(meta.typeMult);
+          }
+          await flashHit(uiSide);
+          updateHud(poke, uiSide, hpSnapshot);
+        }
       }
       // 能力ランク変化：このログ行が画面に表示されるタイミングでエフェクト＋効果音を同時再生し、
       // エフェクトが終わるまでバトル進行（次のメッセージ）を待たせる。
       if (rankUiSide) {
         await rankFlash(rankUiSide, meta.rankChange);
+      }
+      // 天候発動：このログ行が画面に表示されるタイミングで背景エフェクトを見せ、
+      // エフェクトが終わるまで次のメッセージ（--ターンN--等）に進ませない。
+      if (weatherFx) {
+        await playWeatherEffect(weatherFx);
       }
     }, {
       hit: meta && meta.hit ? meta.hit : null,
@@ -1453,11 +1742,21 @@ function makeLogFn() {
       rankChange: meta && meta.rankChange ? meta.rankChange : null,
       rankSide: meta && meta.rankSide ? meta.rankSide : null,
       moveType: moveType,
+      moveId: moveId,
+      weatherFx: weatherFx,
+      movePower: meta && meta.movePower !== undefined ? meta.movePower : null,
     });
   };
 }
 
 async function doSwitch(newActive, side) {
+  // 場を離れる側のポケモンも、本家仕様どおり交代でランク変化・技封じ・
+  // タイプロック（インフェルノ／メイルストローム／イルミンスール由来）等が解除される。
+  const outgoing = side === 'player' ? state.playerActive : state.cpuActive;
+  if (outgoing && outgoing !== newActive) {
+    outgoing.typeLockTurns = 0;
+    outgoing.typeLockType = null;
+  }
   newActive.side = side;
   newActive.deaigashiraLocked = false; // 場に出た最初のターンはであいがしら使用可能
   newActive.turnsOnField = 0; // 場に出てからのターン数をリセット（であいがしら等の初手限定判定用）
@@ -1580,6 +1879,7 @@ async function resolveImmediateSwitch(side) {
 async function runBattleLoop() {
   state.battleBusy = true;
   battleLogHistory = [];
+  clearWeatherFxLayer();
   const bgmNum = BattleBgm.start();
   pushLogLine(battleBgmLogLabel(bgmNum));
   state.playerActive.side = 'player';
@@ -1702,9 +2002,7 @@ async function endBattle(playerWon) {
 /* ---------------- Post-win trade sequence ---------------- */
 function tradeCardHtml(p, idx, disabled) {
   const effectiveTypes = getEffectiveTypesForDisplay(p);
-  const typeDisplay = effectiveTypes.map(t => `
-    <span class="type-chip ${TYPE_CLASS(t)}">${typeJp(t)}</span>
-  `).join('');
+  const typeDisplay = effectiveTypes.map(t => typeChipHtml(t)).join('');
   return `
     <div class="trade-poke-card ${disabled ? 'disabled' : ''}" data-idx="${idx}">
       <button class="tpc-info-btn" data-info-idx="${idx}" type="button"><span>!</span></button>
@@ -1720,7 +2018,7 @@ function tradeCardHtml(p, idx, disabled) {
 }
 
 function showTradeDetail(poke) {
-  $('trade-detail-card').innerHTML = partyDetailHtml(poke);
+  $('trade-detail-card').innerHTML = partyDetailHtmlWide(poke);
   $('trade-detail-overlay').classList.add('show');
 }
 $('trade-detail-close').addEventListener('click', () => {
@@ -1828,6 +2126,7 @@ function startNextCpuBattle() {
   state.playerTeam.forEach(resetPokeForBattle);
   state.playerActive = state.playerTeam.find((p) => !p.fainted) || state.playerTeam[0];
   state.cpuActive = state.cpuTeam[0];
+  setRandomBattleBackground();
   showScreen('battle');
   msgQueue = [];
   runBattleLoop();
@@ -1876,8 +2175,8 @@ function pickCardHtml(poke, idx) {
            onerror="this.replaceWith(makeTeamCardFallback(${poke.speciesId}))">
       <div class="tpc-name">${poke.species.name}</div>
       <div class="tpc-types">
-        <span class="type-chip ${TYPE_CLASS(t1)}">${typeJp(t1)}</span>
-        ${t2 ? `<span class="type-chip ${TYPE_CLASS(t2)}">${typeJp(t2)}</span>` : ''}
+        ${typeChipHtml(t1)}
+        ${t2 ? typeChipHtml(t2) : ''}
       </div>
     </div>
   `;
@@ -2251,9 +2550,7 @@ function startNegoTimer(onTimeout) {
 
 function negoCardHtml(p, idx) {
   const effectiveTypes = getEffectiveTypesForDisplay(p);
-  const typeDisplay = effectiveTypes.map(t => `
-    <span class="type-chip ${TYPE_CLASS(t)}">${typeJp(t)}</span>
-  `).join('');
+  const typeDisplay = effectiveTypes.map(t => typeChipHtml(t)).join('');
   return `
     <div class="trade-poke-card" data-idx="${idx}">
       <button class="tpc-info-btn" data-info-idx="${idx}" type="button"><span>!</span></button>
@@ -2475,6 +2772,7 @@ async function onMultiplayerPickConfirm() {
   await Net.sendTeam(state.playerTeam);
 
   // バトル画面へ移動して待機
+  setRandomBattleBackground();
   showScreen('battle');
   $('battle-log-stack').innerHTML = '';
   logLines = [];
@@ -2528,6 +2826,7 @@ async function onMultiplayerPickConfirm() {
 async function runMultiplayerBattleHost() {
   await Net.clearEvents();
   state.battleBusy = true;
+  clearWeatherFxLayer();
 
   resetHazards();
   resetField();
@@ -2546,6 +2845,10 @@ async function runMultiplayerBattleHost() {
     k: 'turn-end',
     hostTurnsOnField: state.playerActive.turnsOnField || 0,
     guestTurnsOnField: state.cpuActive.turnsOnField || 0,
+    hostTypeLockTurns: state.playerActive.typeLockTurns || 0,
+    hostTypeLockType: state.playerActive.typeLockType || null,
+    guestTypeLockTurns: state.cpuActive.typeLockTurns || 0,
+    guestTypeLockType: state.cpuActive.typeLockType || null,
   });
 
   state.turnNumber = 1;
@@ -2603,6 +2906,10 @@ async function runMultiplayerBattleHost() {
       k: 'turn-end',
       hostTurnsOnField: state.playerActive.turnsOnField || 0,
       guestTurnsOnField: state.cpuActive.turnsOnField || 0,
+      hostTypeLockTurns: state.playerActive.typeLockTurns || 0,
+      hostTypeLockType: state.playerActive.typeLockType || null,
+      guestTypeLockTurns: state.cpuActive.typeLockTurns || 0,
+      guestTypeLockType: state.cpuActive.typeLockType || null,
     });
   }
 }
@@ -2804,21 +3111,46 @@ async function handleGuestEvent(ev) {
       pushBattleLogHistory({ text: ev.t, side: null, kind: logKind, speciesId: null, shiny: false });
     }
 
+    const isBigMove = !!(ev.mp !== null && ev.mp !== undefined && ev.mp > BIG_MOVE_POWER_THRESHOLD);
+    const isSpecialMove = SPECIAL_MOVE_FX_IDS.indexOf(ev.mi !== undefined ? ev.mi : null) !== -1;
     msgQueue.push({
       text: ev.t,
       after: async () => {
         if (uiSide && poke) {
-          if (ev.mt) {
-            await playTypeEffect(uiSide, ev.mt);
+          if (isSpecialMove) {
+            // 専用の全画面エフェクト：スプライト枠に縛られない派手な演出。
+            await playSpecialMoveEffect(ev.mi);
+            if (ev.tm !== null && ev.tm !== undefined) {
+              playTypeEffectSound(ev.tm);
+            }
+            await flashHit(uiSide);
+            updateHud(poke, uiSide, hpSnapshot);
+          } else if (isBigMove && ev.mt) {
+            // 豪華演出：ちょっと長い派手なエフェクトを最後まで見せてから、
+            // 効果音とダメージ反映（ヒット演出＋HP更新）を同時に出す。
+            await playTypeEffect(uiSide, ev.mt, true);
+            if (ev.tm !== null && ev.tm !== undefined) {
+              playTypeEffectSound(ev.tm);
+            }
+            await flashHit(uiSide);
+            updateHud(poke, uiSide, hpSnapshot);
+          } else {
+            if (ev.mt) {
+              await playTypeEffect(uiSide, ev.mt, false);
+            }
+            if (ev.tm !== null && ev.tm !== undefined) {
+              playTypeEffectSound(ev.tm);
+            }
+            await flashHit(uiSide);
+            updateHud(poke, uiSide, hpSnapshot);
           }
-          if (ev.tm !== null && ev.tm !== undefined) {
-            playTypeEffectSound(ev.tm);
-          }
-          await flashHit(uiSide);
-          updateHud(poke, uiSide, hpSnapshot);
         }
         if (rankUiSide) {
           await rankFlash(rankUiSide, ev.rc);
+        }
+        // 天候発動エフェクト（画面全体の演出のため自分/相手の区別は不要）
+        if (ev.wfx) {
+          await playWeatherEffect(ev.wfx);
         }
         // ダメージ演出のない状態異常付与メッセージ等でも、HUD（HPバー・状態異常アイコン）を
         // 毎回両者分とも最新の実データで更新しておく（表示漏れ防止）。
@@ -2882,6 +3214,17 @@ async function handleGuestEvent(ev) {
     if (state.cpuActive && ev.hostTurnsOnField !== undefined) {
       state.cpuActive.turnsOnField = ev.hostTurnsOnField;
     }
+    // タイプロック（インフェルノ／メイルストローム／イルミンスール等）の状態も同期する。
+    // これを反映しないと、参加側（ゲスト）の画面上ではロックされた技が選べてしまい、
+    // 選んでもホスト側で技不発になって1ターン無駄になるバグが起きるため。
+    if (state.playerActive && ev.guestTypeLockTurns !== undefined) {
+      state.playerActive.typeLockTurns = ev.guestTypeLockTurns;
+      state.playerActive.typeLockType = ev.guestTypeLockType || null;
+    }
+    if (state.cpuActive && ev.hostTypeLockTurns !== undefined) {
+      state.cpuActive.typeLockTurns = ev.hostTypeLockTurns;
+      state.cpuActive.typeLockType = ev.hostTypeLockType || null;
+    }
     if (guestTurnEndResolve) {
       const r = guestTurnEndResolve;
       guestTurnEndResolve = null;
@@ -2910,7 +3253,7 @@ async function playGuestMessages() {
       if (msgQueue.length === 0) { resolve(); return; }
       const item = msgQueue.shift();
       pushLogLine(item.text);
-      const afterPromise = item.after ? item.after() : Promise.resolve();
+      const afterPromise = item.after ? withTimeout(item.after(), 4000) : Promise.resolve();
       afterPromise.then(() => {
         setTimeout(() => { showNext(); }, MSG_AUTO_MS);
       });
@@ -2935,6 +3278,7 @@ function waitGuestForcedSwitch() {
 
 async function runMultiplayerBattleGuest() {
   state.battleBusy = true;
+  clearWeatherFxLayer();
   guestEventQueue = [];
   guestProcessing = false;
   guestTurnEndResolve = null;
