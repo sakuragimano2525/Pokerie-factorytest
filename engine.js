@@ -1018,12 +1018,20 @@ function checkCanMove(poke, logFn) {
   }
   if (poke.confuseTurns > 0) {
     poke.confuseTurns--;
-    if (rand(1, 100) <= 33) {
-      const selfDmg = Math.max(1, Math.floor(poke.stats.atk / 8));
-      poke.currentHp = Math.max(0, poke.currentHp - selfDmg);
-      logFn(`${poke.species.name}は混乱して自分を攻撃した！`, { hit: poke.side });
-      if (poke.currentHp <= 0) { poke.fainted = true; logFn(`${poke.species.name}は倒れた！`, { faint: poke.side }); }
-      return false;
+    if (poke.confuseTurns <= 0) {
+      logFn(`${poke.species.name}の混乱がなおった！`);
+      // 混乱が治ったこのターンは自傷判定なしで通常の行動に移る（原作準拠）。
+    } else {
+      const selfHitThisTurn = rand(1, 100) <= 33;
+      if (!selfHitThisTurn) {
+        logFn(`${poke.species.name}は混乱している！`);
+      } else {
+        const selfDmg = Math.max(1, Math.floor(poke.stats.atk / 8));
+        poke.currentHp = Math.max(0, poke.currentHp - selfDmg);
+        logFn(`${poke.species.name}は混乱して自分を攻撃した！`, { hit: poke.side });
+        if (poke.currentHp <= 0) { poke.fainted = true; logFn(`${poke.species.name}は倒れた！`, { faint: poke.side }); }
+        return false;
+      }
     }
   }
   return true;
@@ -1568,6 +1576,10 @@ function executeMove(attacker, defender, move, logFn) {
   // ---- であいがしら：場に出た1ターン目のみ使用可能（isDeaigashiraLockedFor/chooseCpuActionでturnsOnFieldにより判定） ----
 
   // ---- げきりん：強制連続使用の管理 ----
+  // ここでは「今回の攻撃で強制ターンが終わるかどうか」だけを判定する。
+  // 混乱の付与自体は selfStatus の共通処理（攻撃が完全に終わった後）に任せることで、
+  // 「攻撃→ダメージ確定→その後に混乱」という原作どおりの順序になる。
+  let gekirinJustEnded = false;
   if (move.id === 43) {
     if (attacker.gekirinTurns <= 0) {
       // 新規発動：2〜3ターン継続（本ターンを含む）
@@ -1577,8 +1589,7 @@ function executeMove(attacker, defender, move, logFn) {
     attacker.gekirinTurns--;
     if (attacker.gekirinTurns <= 0) {
       attacker.gekirinMoveId = null;
-      // 強制ターン終了後、自分が混乱する
-      applyStatus(attacker, [100, STATUS.CONFUSE], logFn);
+      gekirinJustEnded = true;
     }
   }
 
@@ -2109,9 +2120,14 @@ function executeMove(attacker, defender, move, logFn) {
   if (defender.currentHp <= 0) {
     defender.fainted = true;
     logFn(`${defender.species.name}は倒れた！`, { faint: defender.side });
-    // 相手を倒した場合でも、技自体は命中しているため自分のランク変化（selfRank）は発動する。
+    // 相手を倒した場合でも、技自体は命中しているため自分のランク変化（selfRank）や
+    // 自分への状態異常（selfStatus：朧一閃の眠り等）は発動する。
+    // げきりんは強制ターンが終わったときだけ混乱を付与する。
     if (!attacker.fainted && !suppressSecondary) {
       applyRankChange(attacker, move.selfRank, logFn);
+      if (move.id !== 43 || gekirinJustEnded) {
+        applyStatus(attacker, move.selfStatus, logFn);
+      }
     }
     if (defender.ability === ABILITY.YUUBABU && !attacker.fainted) {
       if (!battleField.chemicalGasActive || defender.ability === ABILITY.KAGAKUHENKAGASU) {
@@ -2132,6 +2148,13 @@ function executeMove(attacker, defender, move, logFn) {
       applyRankChange(defender, move.oppRank, logFn);
       applyRankChange(attacker, move.selfRank, logFn);
       applyStatus(defender, move.oppStatus, logFn, attacker.ability);
+      // 朧一閃・げきりんなど「攻撃後に自分が状態異常になる」技のselfStatusを適用。
+      // 攻撃が完全に終わった後（ダメージ確定・追加効果の後）に発動させることで、
+      // 原作同様「技が成功してから自分に効果が返る」順序になる。
+      // げきりんは強制ターンが終わったとき（gekirinJustEnded）だけ混乱を付与する。
+      if (!attacker.fainted && (move.id !== 43 || gekirinJustEnded)) {
+        applyStatus(attacker, move.selfStatus, logFn);
+      }
     }
     if (move.category === 'physical' && !defender.fainted) {
       if (defender.ability === ABILITY.SEIDENKI && attacker.status === STATUS.NONE && rand(1, 100) <= 30) {

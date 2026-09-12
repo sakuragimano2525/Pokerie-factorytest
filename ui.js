@@ -1366,6 +1366,20 @@ function playerChooseSwitch(idx) {
 }
 
 function waitForPlayerAction() {
+  // げきりん強制中は、コマンド選択そのものを行わせず自動でその技を選択する。
+  // （本家のように「げきりんしか選べない」表示にするのではなく、選択操作自体を
+  //   スキップしてそのまま技が繰り出される形にする）
+  const poke = state.playerActive;
+  if (poke && poke.gekirinTurns > 0 && poke.gekirinMoveId !== null) {
+    const forcedMove = poke.moves.find(m => m.id === poke.gekirinMoveId);
+    if (forcedMove) {
+      $('cmd-panel').innerHTML = '';
+      $('cmd-dock').classList.remove('dock-wide');
+      setWatchLogButtonsActive(false);
+      queueMessage(`${poke.species.name}は げきりんの ちからを おさえきれない！`);
+      return Promise.resolve({ type: 'move', move: forcedMove });
+    }
+  }
   renderActionMenu();
   return new Promise((resolve) => { turnResolve = resolve; });
 }
