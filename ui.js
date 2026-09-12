@@ -146,6 +146,7 @@ initClickSoundPool();
 function playClickSound() {
   const a = clickSoundPool[clickSoundIdx];
   clickSoundIdx = (clickSoundIdx + 1) % clickSoundPool.length;
+  a._iosUnlockToken = null; // iOSアンロック処理が後からこのインスタンスを止めないようにする
   try {
     a.currentTime = 0;
     const p = a.play();
@@ -184,6 +185,7 @@ function playBattleSfx(path) {
   const entry = getBattleSfxPool(path);
   const a = entry.pool[entry.idx];
   entry.idx = (entry.idx + 1) % entry.pool.length;
+  a._iosUnlockToken = null; // iOSアンロック処理が後からこのインスタンスを止めないようにする
   try {
     a.currentTime = 0;
     const p = a.play();
@@ -250,6 +252,7 @@ const BattleBgm = (() => {
     const audio = preloaded ? preloaded : new Audio(path);
     audio.loop = true;
     audio.volume = 0.4;
+    audio._iosUnlockToken = null; // iOSアンロック処理が後からこのインスタンスを止めないようにする
     try { audio.currentTime = 0; } catch (e) {}
     currentAudio = audio;
     const p = audio.play();
@@ -293,6 +296,7 @@ const MenuBgm = (() => {
     if (playing) return;
     playing = true;
     const a = getAudio();
+    a._iosUnlockToken = null; // iOSアンロック処理が後からこのインスタンスを止めないようにする
     const p = a.play();
     if (p && p.catch) p.catch(() => {});
   }
@@ -3353,22 +3357,48 @@ AssetPreloader.preloadAll();
 // 「BGMは鳴るのに効果音や対戦中の曲だけ鳴らない」または「何も鳴らない」という
 // iPhoneでの不具合の主な原因になる。そこで最初のユーザー操作のタイミングで、
 // 存在する全Audioインスタンスに対して「即再生→即一時停止」を行い、まとめてアンロックする。
+// play()は非同期でわずかに遅延することがあり、pause()が間に合わないと
+// 一瞬だけ実際に音が聞こえてしまうことがあるため、再生前に音量を0にしておき、
+// 元の音量に戻してからアンロック処理を終える。
+// なお menu.mp3 はこの直後に MenuBgm.start() が独自に再生を開始するため、
+// ここで扱うと pause() のタイミングが競合して再生が止まってしまう恐れがある。
+// そのため menu.mp3 はアンロック対象から除外し、MenuBgm.start() 側の
+// 通常再生自体にアンロックを任せる。
 function unlockAllAudioForIOS() {
   const targets = [];
   clickSoundPool.forEach((a) => targets.push(a));
   Object.values(battleSfxPools).forEach((entry) => entry.pool.forEach((a) => targets.push(a)));
-  AssetPreloader.audioBuffers.forEach((a) => targets.push(a));
+  AssetPreloader.audioBuffers.forEach((a, path) => {
+    if (path === './menu.mp3') return;
+    targets.push(a);
+  });
   targets.forEach((a) => {
+    const originalVolume = a.volume;
+    // このAudioインスタンスに対して、アンロック処理が再生を仕込んだ「印」を付けておく。
+    // play()のPromise解決後、この印が書き換わっていなければ「その間に誰も
+    // このインスタンスを使っていない」と分かるので、そのときだけ安全に止める。
+    // バトルBGM開始などが割り込んでいた場合はここで止めてしまうと再生を潰してしまうため触らない。
+    const token = {};
+    a._iosUnlockToken = token;
+    try { a.volume = 0; } catch (e) {}
+    const restore = () => {
+      if (a._iosUnlockToken !== token) return; // 途中で他の再生に使われていたら何もしない
+      try {
+        a.pause();
+        a.currentTime = 0;
+        a.volume = originalVolume;
+      } catch (e) {}
+    };
     try {
       const p = a.play();
       if (p && p.then) {
-        p.then(() => {
-          try { a.pause(); a.currentTime = 0; } catch (e) {}
-        }).catch(() => {});
+        p.then(restore).catch(restore);
       } else {
-        try { a.pause(); a.currentTime = 0; } catch (e) {}
+        restore();
       }
-    } catch (e) {}
+    } catch (e) {
+      restore();
+    }
   });
 }
 function startMenuBgmOnFirstInteraction() {
