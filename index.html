@@ -1294,7 +1294,27 @@ html,body{
 #nego-cards.trade-offer-row .trade-poke-card .type-chip,
 #nego-reorder-cards.trade-offer-row .trade-poke-card .type-chip{ font-size:8px; padding:2px 5px; gap:3px; }
 #nego-cards.trade-offer-row .trade-poke-card .type-chip-icon,
-#nego-reorder-cards.trade-offer-row .trade-poke-card .type-chip-icon{ width:9px; height:9px; }
+#nego-reorder-cards.trade-offer-row .trade-poke-card .type-chip-icon{ width:9px !important; height:9px !important; }
+/* 「入れ替える」画面（#nego-reorder-cards）はさらに個別セレクタでも強制指定し、
+   カスケードの取りこぼしがあっても確実に縮小サイズが当たるようにする */
+#nego-reorder-cards .trade-poke-card .type-chip-icon,
+#nego-reorder-cards .type-chip-icon{ width:9px !important; height:9px !important; }
+#nego-reorder-cards .trade-poke-card .type-chip{ font-size:8px !important; padding:2px 5px !important; gap:3px !important; }
+/* 対人戦：「手持ちを変える」フェーズ（提示された1匹を選ぶ画面／交換相手を選ぶ画面）も
+   同様にタイプアイコンが基本サイズのままだと大きすぎるため縮小する */
+#nego-swap-offer-row .trade-poke-card .type-chip-icon,
+#nego-swap-replace-row .trade-poke-card .type-chip-icon{ width:9px !important; height:9px !important; }
+#nego-swap-offer-row .trade-poke-card .type-chip,
+#nego-swap-replace-row .trade-poke-card .type-chip{ font-size:8px !important; padding:2px 5px !important; gap:3px !important; }
+#nego-swap-offer-row .trade-poke-card .tpc-types,
+#nego-swap-replace-row .trade-poke-card .tpc-types{ margin-top:4px; }
+/* 対戦勝利後のトレード（相手のポケモンをもらう／渡す1匹を選ぶ画面）も同様に縮小する */
+#trade-offer-row .trade-poke-card .type-chip-icon,
+#trade-replace-row .trade-poke-card .type-chip-icon{ width:9px !important; height:9px !important; }
+#trade-offer-row .trade-poke-card .type-chip,
+#trade-replace-row .trade-poke-card .type-chip{ font-size:8px !important; padding:2px 5px !important; gap:3px !important; }
+#trade-offer-row .trade-poke-card .tpc-types,
+#trade-replace-row .trade-poke-card .tpc-types{ margin-top:4px; }
 #pick-overlay .tpc-info-btn{ width:24px; height:24px; top:4px; right:4px; }
 .pick-order-badge{
   position:absolute; top:-7px; left:-7px;
