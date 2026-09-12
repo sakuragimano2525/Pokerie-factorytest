@@ -180,11 +180,42 @@ function playRankDownSound() { playBattleSfx('./fall.mp3'); }
 ['./supeff.mp3', './noteff.mp3', './hit.mp3', './sup.mp3', './fall.mp3'].forEach(getBattleSfxPool);
 
 /* ---------------- バトルBGM ---------------- */
+// 曲名リスト（1〜20）。ここに好きな曲名を入れてください。
+const BATTLE_BGM_NAMES = {
+  1: 'パズドラZ-天地鳴動',
+  2: 'ポケリエ-さすらいクロネコ戦',
+  3: 'パズドラX-ボスバトル',
+  4: '妖怪ウォッチ2-和風な妖怪',
+  5: '妖怪ウォッチ-強い妖怪',
+  6: '大乱闘スマッシュブラザーズX-メタナイトの逆襲(アレンジ)',
+  7: '妖怪ウォッチバスターズ-ぬらりひょん',
+  8: '妖怪ウォッチバスターズ-大妖魔ぬらねいら',
+  9: 'ポケリエ-ののあ戦',
+  10: 'ポケリエ-リュウガン戦',
+  11: 'ポケモン-決勝！WCS',
+  12: 'ポケモン-戦闘！グラジオ(アレンジ)',
+  13: 'ポケモン-戦闘！ウォロ(アレンジ)',
+  14: 'モンスターハンター-ディノバルド',
+  15: 'ポケモン-バトルタワー(剣盾)',
+  16: 'ブルーアーカイブ-Cherry Merry Berry',
+  17: 'ポケモン-戦闘！ソルガレオ・ルナアーラ(アレンジ)',
+  18: 'モンスターハンター-ゾ・シア',
+  19: 'ポケモン-戦闘！パルデア四天王！(アレンジ)',
+  20: '妖怪ウォッチ-VS妖怪',
+};
+function battleBgmLogLabel(n) {
+  const num = String(n).padStart(2, '0');
+  const name = BATTLE_BGM_NAMES[n] || '';
+  return `BGM${num}「${name}」`;
+}
+
 const BattleBgm = (() => {
   let currentAudio = null;
+  let currentTrackNum = null;
 
   function pickTrackPath() {
     const n = rand(1, 20);
+    currentTrackNum = n;
     return `./${n}.mp3`;
   }
 
@@ -200,6 +231,7 @@ const BattleBgm = (() => {
     currentAudio = audio;
     const p = audio.play();
     if (p && p.catch) p.catch(() => {});
+    return currentTrackNum;
   }
 
   function stop() {
@@ -210,9 +242,12 @@ const BattleBgm = (() => {
       } catch (e) {}
       currentAudio = null;
     }
+    currentTrackNum = null;
   }
 
-  return { start, stop };
+  function getCurrentTrackNum() { return currentTrackNum; }
+
+  return { start, stop, getCurrentTrackNum };
 })();
 
 /* ---------------- ホーム/選出/ルーム待機中のBGM ---------------- */
@@ -645,7 +680,9 @@ function isTrappedByKagefumi(self, opponent) {
 }
 
 function isDeaigashiraLockedFor(poke, m) {
-  return m.id === 4 && poke.deaigashiraLocked;
+  // であいがしらは場に出た1ターン目（turnsOnField === 0）のみ使用可能。
+  // 1ターン目に他の技を使った場合でも、2ターン目以降は使用不可（ロック）になる。
+  return m.id === 4 && (poke.turnsOnField || 0) > 0;
 }
 
 function renderMoveMenu() {
@@ -1039,7 +1076,7 @@ const ABILITY_DESC_BY_ID = {
 108: '相手の能力上昇をトレース',
 109: 'HP半分で特攻+1',
 110: '相手の特性がわかる',
-111: '相手の危険な技を2つログ表示',
+111: '相手のランダムな技を2つログ表示',
 126: '相手の優先度+1以上の技を無効化',
 127: '物理技のダメージが半減する',
 128: '特殊技のダメージが半減する',
@@ -1050,7 +1087,7 @@ const ABILITY_DESC_BY_ID = {
 136: 'スタック2で素早さ+1、3で防御・特防+2',
 137: 'スタック数×0.2倍、技威力が上昇する',
 115: '連続技が必ず最大回数当たる',
-122: '相手の危険な技を2つログ表示（111と同じ）',
+122: '相手の技をランダム2つログ表示',
 123: '相手の壁（リフレクター・ひかりのかべ）を貫通する',
 125: '変化技を跳ね返す',
 85: '自分の命中率ランクが下がらない',
@@ -1409,8 +1446,14 @@ function makeLogFn() {
 async function doSwitch(newActive, side) {
   newActive.side = side;
   newActive.deaigashiraLocked = false; // 場に出た最初のターンはであいがしら使用可能
+  newActive.turnsOnField = 0; // 場に出てからのターン数をリセット（であいがしら等の初手限定判定用）
   newActive.gekirinTurns = 0; // 交代でげきりんの強制状態は解除
   newActive.gekirinMoveId = null;
+  newActive.protecting = false; // 交代でまもる状態は解除
+  newActive.protectStreak = 0;  // 交代でまもる連続使用カウントもリセット
+  // 本家仕様：交代すると能力ランク変化は元に戻り、テラーバインド等の技封じも解除される
+  newActive.ranks = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, acc: 0, eva: 0 };
+  if (newActive.moves) newActive.moves.forEach((m) => { if (m) m.locked = false; });
   if (side === 'player') {
     state.playerActive = newActive;
     setSprite(newActive, 'self');
@@ -1523,7 +1566,8 @@ async function resolveImmediateSwitch(side) {
 async function runBattleLoop() {
   state.battleBusy = true;
   battleLogHistory = [];
-  BattleBgm.start();
+  const bgmNum = BattleBgm.start();
+  pushLogLine(battleBgmLogLabel(bgmNum));
   state.playerActive.side = 'player';
   state.cpuActive.side = 'cpu';
   updateHud(state.playerActive, 'self');
@@ -1759,6 +1803,7 @@ function resetPokeForBattle(poke) {
   poke.utsusemiTurns = 0;
   poke.infernoUsed = false;
   poke.deaigashiraLocked = false;
+  poke.turnsOnField = 0;
   poke.gekirinTurns = 0;
   poke.gekirinMoveId = null;
 }
@@ -2234,10 +2279,18 @@ function runNegotiatePhase() {
 
       // 相手の完了を待つ
       await new Promise((res) => {
-        Net.onOpponentNegoDone((done) => { if (done) res(); });
+        const unsub = Net.onOpponentNegoDone((done) => {
+          if (done) { if (unsub) unsub(); res(); }
+        });
       });
       $('nego-wait-overlay').classList.remove('show');
-      await Net.clearNego();
+      // nego データの削除は片方（ホスト）だけが行う。
+      // 両者が同時に削除を行うと、片方の削除が相手の「相手完了」読み取りより先に
+      // Firebase上で反映されてしまい、相手が hostDone/guestDone を一生観測できず
+      // 永久に待機し続けるバグ（対戦が始まらない）につながるため。
+      if (state.isHost) {
+        await Net.clearNego();
+      }
       resolve();
     };
 
@@ -2426,7 +2479,8 @@ async function onMultiplayerPickConfirm() {
     $('battle-log-stack').innerHTML = '';
     logLines = [];
 
-    BattleBgm.start();
+    const bgmNum = BattleBgm.start();
+    pushLogLine(battleBgmLogLabel(bgmNum));
 
     if (state.isHost) {
       await runMultiplayerBattleHost();
@@ -2456,13 +2510,17 @@ async function runMultiplayerBattleHost() {
   applyWeatherTerrainAbilityOnSwitchIn(state.playerActive, makeLogFn(), state.cpuActive);
   await drainMessages();
 
-  await Net.pushEvent({ k: 'turn-end' });
+  await Net.pushEvent({
+    k: 'turn-end',
+    hostTurnsOnField: state.playerActive.turnsOnField || 0,
+    guestTurnsOnField: state.cpuActive.turnsOnField || 0,
+  });
 
   state.turnNumber = 1;
 
   while (true) {
-    if (state.playerTeam.every((p) => p.fainted)) { await endMultiplayerBattleHost(true); return; }
-    if (state.cpuTeam.every((p) => p.fainted)) { await endMultiplayerBattleHost(false); return; }
+    if (state.playerTeam.every((p) => p.fainted)) { await endMultiplayerBattleHost(false); return; }
+    if (state.cpuTeam.every((p) => p.fainted)) { await endMultiplayerBattleHost(true); return; }
 
     queueTurnDivider(state.turnNumber);
     await drainMessages();
@@ -2509,7 +2567,11 @@ async function runMultiplayerBattleHost() {
     await postTurnCleanupMultiplayerHost();
     state.turnNumber++;
 
-    await Net.pushEvent({ k: 'turn-end' });
+    await Net.pushEvent({
+      k: 'turn-end',
+      hostTurnsOnField: state.playerActive.turnsOnField || 0,
+      guestTurnsOnField: state.cpuActive.turnsOnField || 0,
+    });
   }
 }
 
@@ -2749,6 +2811,21 @@ async function handleGuestEvent(ev) {
     poke.maxHp = ev.mhp !== undefined ? ev.mhp : poke.maxHp;
     poke.status = ev.st !== undefined ? ev.st : poke.status;
     poke.confuseTurns = ev.cf !== undefined ? ev.cf : poke.confuseTurns;
+    // 交代時のリセット（本家仕様：能力ランクは元に戻り、テラーバインド等の技封じも解除される。
+    // であいがしら等の初手限定技も再び使用可能になる）。
+    // ※ 既に場に出ているポケモンが再描画されただけ（バトル開始時の初回setSpriteなど）の場合は
+    //   交代とみなさず何もしない。交代と判定するのは「表示上のアクティブが変わる時」のみ。
+    const isActualSwitch = (uiSide === 'self' ? state.playerActive : state.cpuActive) !== poke;
+    if (isActualSwitch) {
+      poke.ranks = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, acc: 0, eva: 0 };
+      if (poke.moves) poke.moves.forEach((m) => { if (m) m.locked = false; });
+      poke.deaigashiraLocked = false;
+      poke.turnsOnField = 0;
+      poke.gekirinTurns = 0;
+      poke.gekirinMoveId = null;
+      poke.protecting = false;
+      poke.protectStreak = 0;
+    }
     if (uiSide === 'self') state.playerActive = poke; else state.cpuActive = poke;
     setSprite(poke, uiSide);
     updateHud(poke, uiSide);
@@ -2765,6 +2842,14 @@ async function handleGuestEvent(ev) {
   }
 
   if (ev.k === 'turn-end') {
+    // ホスト視点の playerActive/cpuActive を、ゲスト画面での opp/self に対応させて反映する。
+    // ゲスト画面: self(自分) = ホストの cpuActive、opp(相手) = ホストの playerActive
+    if (state.playerActive && ev.guestTurnsOnField !== undefined) {
+      state.playerActive.turnsOnField = ev.guestTurnsOnField;
+    }
+    if (state.cpuActive && ev.hostTurnsOnField !== undefined) {
+      state.cpuActive.turnsOnField = ev.hostTurnsOnField;
+    }
     if (guestTurnEndResolve) {
       const r = guestTurnEndResolve;
       guestTurnEndResolve = null;

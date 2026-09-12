@@ -204,8 +204,11 @@ function createRandomPokemon(speciesId, level = 100) {
     utsusemiTurns: 0,       // うつせみカウント（相手に付与）
     infernoUsed: false,     // インフェルノを使用したフラグ
     deaigashiraLocked: false, // であいがしら：登場ターン以外はロック（交代で解除）
+    turnsOnField: 0,        // 場に出てから経過したターン数（0=登場ターン）。であいがしら等の初手限定判定に使用
     gekirinTurns: 0,        // げきりん：強制連続使用の残りターン数
     gekirinMoveId: null,    // げきりん：強制されている技ID
+    protecting: false,      // このターン「まもる」等で守っているか
+    protectStreak: 0,       // まもる等の連続成功回数（連続使用で失敗率が上がる）
   };
 }
 
@@ -1205,14 +1208,17 @@ function checkAndTriggerFundo(poke, logFn) {
 }
 
 // ---- ダメージを受けたときの特性 ----
-function applyDamageTakenEffects(poke, logFn) {
+// isPhysicalMoveHit: 相手の直接の「物理技」を受けてこの関数が呼ばれた場合のみ true。
+// 状態異常ダメージ・設置技・天候ダメージ・攻撃側自身への呼び出しでは false（省略時）にすること。
+// くだけるよろい／じきゅうりょくは「物理技を受けた時」限定の特性のため、ここで判定する。
+function applyDamageTakenEffects(poke, logFn, isPhysicalMoveHit) {
   if (!poke || poke.fainted) return;
-  if (poke.ability === ABILITY.JIKYUURYOKU) {
+  if (poke.ability === ABILITY.JIKYUURYOKU && isPhysicalMoveHit) {
     const rankData = [100, 0, 1, 0, 0, 0, 0, 0];
     applyRankChange(poke, rankData, logFn);
     logFn(`${poke.species.name}のじきゅうりょくが発動！`);
   }
-  if (poke.ability === ABILITY.KUDAKERU_YOROI) {
+  if (poke.ability === ABILITY.KUDAKERU_YOROI && isPhysicalMoveHit) {
     const rankData = [100, 0, -1, 0, 0, 2, 0, 0];
     applyRankChange(poke, rankData, logFn);
     logFn(`${poke.species.name}のくだけるよろいが発動！`);
@@ -1489,6 +1495,25 @@ function executeMove(attacker, defender, move, logFn) {
   // ここで一元的に記録し、途中の各処理で上書きされても同じ値が入るだけなので問題ない。
   attacker.lastUsedMoveId = move.id;
 
+  // ---- まもる ----
+  if (move.id === 2019) {
+    // 連続で使うと成功率が下がる（原作準拠）: 1回目100%, 2回目33%, 3回目11%...(1/3ずつ)
+    const successRate = attacker.protectStreak > 0 ? Math.pow(1 / 3, attacker.protectStreak) : 1;
+    if (rand(1, 100) <= Math.round(successRate * 100)) {
+      attacker.protecting = true;
+      attacker.protectStreak += 1;
+      logFn(`${attacker.species.name}は身を守った！`);
+    } else {
+      attacker.protectStreak = 0;
+      logFn(`しかし失敗した！`);
+    }
+    return;
+  }
+  // まもる以外の技を使ったら連続成功カウントはリセットする
+  if (move.id !== 2019) {
+    attacker.protectStreak = 0;
+  }
+
   // ---- のろわれボディ ----
   if (defender.ability === ABILITY.NOROWARE_BODY && move.category === 'physical' && !defender.fainted) {
     if (!battleField.chemicalGasActive || defender.ability === ABILITY.KAGAKUHENKAGASU) {
@@ -1540,10 +1565,7 @@ function executeMove(attacker, defender, move, logFn) {
     return;
   }
 
-  // ---- であいがしら：使用したら次のターンからロック（交代で解除） ----
-  if (move.id === 4) {
-    attacker.deaigashiraLocked = true;
-  }
+  // ---- であいがしら：場に出た1ターン目のみ使用可能（isDeaigashiraLockedFor/chooseCpuActionでturnsOnFieldにより判定） ----
 
   // ---- げきりん：強制連続使用の管理 ----
   if (move.id === 43) {
@@ -1581,18 +1603,14 @@ function executeMove(attacker, defender, move, logFn) {
     logFn(`${attacker.species.name}はきりばらいで場を払った！`);
     return;
   }
-  if (move.id === 180) { // テラーバインド
-    if (attacker.side === 'player' && defender.side === 'cpu') {
-      const unlockable = defender.moves.filter(m => m && !m.locked);
-      if (unlockable.length > 0) {
-        const target = pick(unlockable);
-        target.locked = true;
-        logFn(`${defender.species.name}の${target.name}が封じられた！`);
-      } else {
-        logFn(`しかし、全ての技が既に封じられている！`);
-      }
+  if (move.id === 180) { // テラーバインド：相手のランダムな技を1つ封じる（プレイヤー・CPU両方で機能）
+    const unlockable = defender.moves.filter(m => m && !m.locked);
+    if (unlockable.length > 0) {
+      const target = pick(unlockable);
+      target.locked = true;
+      logFn(`${defender.species.name}の${target.name}が封じられた！`);
     } else {
-      logFn(`テラーバインドはNPCには効果がないようだ…`);
+      logFn(`しかし、全ての技が既に封じられている！`);
     }
     return;
   }
@@ -1797,8 +1815,8 @@ function executeMove(attacker, defender, move, logFn) {
       }
       checkAndTriggerFundo(attacker, logFn);
       checkAndTriggerFundo(defender, logFn);
-      applyDamageTakenEffects(attacker, logFn);
-      applyDamageTakenEffects(defender, logFn);
+      applyDamageTakenEffects(attacker, logFn, false);
+      applyDamageTakenEffects(defender, logFn, move.category === 'physical');
       // 技を使った本人（attacker）のlastUsedMoveIdを記録（アンコール・ひややかパンチ用）
       attacker.lastUsedMoveId = move.id;
       return;
@@ -1873,6 +1891,11 @@ function executeMove(attacker, defender, move, logFn) {
       logFn(`しかし当たらなかった！`);
       return;
     }
+    // ---- まもるによるブロック（相手に効果のある変化技のみ） ----
+    if (attacker !== defender && defender.protecting && (move.oppRank || move.oppStatus)) {
+      logFn(`${defender.species.name}は攻撃をまもった！`);
+      return;
+    }
     if (move.id === 318 || move.id === 495) {
       setHazard(move.id, attacker.side, logFn);
       if (!suppressSecondary) applyRankChange(attacker, move.selfRank, logFn);
@@ -1912,6 +1935,17 @@ function executeMove(attacker, defender, move, logFn) {
       logFn(`${defender.species.name}は挑発された！`);
       return;
     }
+    // ---- じこさいせい・はねやすめ等、drainRatioを最大HP割合の自己回復として使う回復技 ----
+    if (move.power === null && move.drainRatio) {
+      if (attacker.currentHp >= attacker.maxHp) {
+        logFn('しかしHPは満タンだった！');
+        return;
+      }
+      const healAmt = Math.max(1, Math.floor(attacker.maxHp * move.drainRatio));
+      attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + healAmt);
+      logFn(`${attacker.species.name}のHPが回復した！`, { hit: attacker.side });
+      return;
+    }
 
     if (!suppressSecondary) applyRankChange(attacker, move.selfRank, logFn);
     if (!suppressSecondary) applyRankChange(defender, move.oppRank, logFn);
@@ -1930,6 +1964,12 @@ function executeMove(attacker, defender, move, logFn) {
       logFn(`しかし${defender.species.name}には当たらなかった！`);
       return;
     }
+  }
+
+  // ---- まもるによるブロック ----
+  if (attacker !== defender && defender.protecting) {
+    logFn(`${defender.species.name}は攻撃をまもった！`);
+    return;
   }
 
   // タイプ吸収系（実効タイプを使用）
@@ -2051,6 +2091,16 @@ function executeMove(attacker, defender, move, logFn) {
     logFn(`天気が晴れになった！`);
   }
 
+  // ---- きたかぜたいよう：天候を「ひでり（ひざしがつよい）」にする ----
+  if (move.id === 136 && battleField.weather !== 'sun') {
+    setWeather('sun', 5, logFn);
+  }
+
+  // ---- ゆうだち：天候を「あめ」にする ----
+  if (move.id === 358 && battleField.weather !== 'rain') {
+    setWeather('rain', 5, logFn);
+  }
+
   if (attacker.currentHp <= 0) {
     attacker.fainted = true;
     logFn(`${attacker.species.name}は倒れた！`, { faint: attacker.side });
@@ -2118,8 +2168,8 @@ function executeMove(attacker, defender, move, logFn) {
 
   checkAndTriggerFundo(attacker, logFn);
   checkAndTriggerFundo(defender, logFn);
-  applyDamageTakenEffects(attacker, logFn);
-  applyDamageTakenEffects(defender, logFn);
+  applyDamageTakenEffects(attacker, logFn, false);
+  applyDamageTakenEffects(defender, logFn, move.category === 'physical');
 
   // 技を使った本人（attacker）のlastUsedMoveIdを記録（アンコール・ひややかパンチ用）
   attacker.lastUsedMoveId = move.id;
@@ -2188,7 +2238,11 @@ async function runTurn(playerAction, cpuAction, playerPoke, cpuPoke, logFn, onIm
   if (!playerPoke.fainted) playerPoke.flinch = false;
   if (!cpuPoke.fainted) cpuPoke.flinch = false;
 
-  [playerPoke, cpuPoke].forEach((p) => { if (!p.fainted) applyEndOfTurnStatus(p, logFn); });
+  // まもるの効果は自分の次の行動まで（このターン限り）。ターン終了時に解除する。
+  if (!playerPoke.fainted) playerPoke.protecting = false;
+  if (!cpuPoke.fainted) cpuPoke.protecting = false;
+
+  [playerPoke, cpuPoke].forEach((p) => { if (!p.fainted) { applyEndOfTurnStatus(p, logFn); p.turnsOnField++; } });
   const alivePokes = [playerPoke, cpuPoke].filter((p) => !p.fainted);
   if (alivePokes.length > 0) applyEndOfTurnField(alivePokes, logFn);
 }
@@ -2315,7 +2369,8 @@ function weatherTerrainScoreMult(moveType, moveId) {
 }
 
 function chooseCpuAction(cpuPoke, playerPoke) {
-  const usable = cpuPoke.moves.filter((m) => m.pp > 0 && !m.locked && !(m.id === 4 && cpuPoke.deaigashiraLocked));
+  // であいがしらは場に出た1ターン目（turnsOnField === 0）のみ使用可能
+  const usable = cpuPoke.moves.filter((m) => m.pp > 0 && !m.locked && !(m.id === 4 && (cpuPoke.turnsOnField || 0) > 0));
   if (usable.length === 0) return { type: 'move', move: cpuPoke.moves.find(m => m.pp > 0) || cpuPoke.moves[0] };
 
   // げきりん強制連続使用
@@ -2600,6 +2655,10 @@ function chooseTrainerAttack(attacker, defender, usableMoves) {
     else if ([496, 502].includes(move.id)) {
       score += battleField.weather === 'rain' ? 4 : -4;
     }
+    // きたかぜたいよう(136)：天候がひでり(sun)でなければ、天候変化を狙って少し優先
+    else if (move.id === 136 && battleField.weather !== 'sun') { score += 2; }
+    // ゆうだち(358)：天候があめ(rain)でなければ、天候変化を狙って少し優先
+    else if (move.id === 358 && battleField.weather !== 'rain') { score += 2; }
     // ゆびをふる(479)：自分の持ち技に相手への有効打(等倍以上)が一つも無い時、優先的に使う
     else if (move.id === 479) {
       const noEffectiveHit = usableMoves.every((other) => {

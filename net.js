@@ -204,7 +204,9 @@ const Net = {
     const ref = this.roomRef.child(path);
     const handler = (snap) => cb(!!snap.val());
     ref.on('value', handler);
-    this._unsubs.push(() => ref.off('value', handler));
+    const unsub = () => ref.off('value', handler);
+    this._unsubs.push(unsub);
+    return unsub;
   },
 
   async clearNego() {
@@ -416,7 +418,8 @@ function deserializePokeFromNet(d) {
     typeLockTurns: 0, typeLockType: null,
     lastUsedMoveId: null, encoreMoveId: null, encoreTurns: 0,
     utsusemiTurns: 0, infernoUsed: false,
-    deaigashiraLocked: false, gekirinTurns: 0, gekirinMoveId: null,
+    deaigashiraLocked: false, turnsOnField: 0, gekirinTurns: 0, gekirinMoveId: null,
+    protecting: false, protectStreak: 0,
   };
 }
 
