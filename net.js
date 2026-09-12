@@ -170,11 +170,31 @@ const Net = {
   async sendTeam(team) {
     if (!this.roomRef) return;
     const path = this.isHost ? 'hostTeam' : 'guestTeam';
-    await this.roomRef.child(path).set(team.map(serializePokeForNet));
+    const payload = team.map(serializePokeForNet);
+    // 対戦相手が「相手の選出を待っています…」のまま固まるのを防ぐため、
+    // 通信が不安定な場合は数回リトライしてから諦める（ここで例外を投げると
+    // 以降の画面遷移ごと止まってしまうため、最終手段としてthrowはする）。
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await this.roomRef.child(path).set(payload);
+        return;
+      } catch (e) {
+        lastErr = e;
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+    throw lastErr;
   },
 
+  // 直前に登録された onOpponentTeam のリスナーを覚えておき、連戦などで再登録される際に
+  // 必ず先に解除する。これを怠ると同じパスに複数の 'value' リスナーが積み重なり、
+  // 片方のクロージャの done フラグと実際の受信が噛み合わずコールバックが呼ばれない
+  // ことがある（「相手の選出を待っています…」のまま止まる不具合の一因）。
+  _opponentTeamUnsub: null,
   onOpponentTeam(cb) {
     if (!this.roomRef) return;
+    if (this._opponentTeamUnsub) { this._opponentTeamUnsub(); this._opponentTeamUnsub = null; }
     const path = this.isHost ? 'guestTeam' : 'hostTeam';
     const ref = this.roomRef.child(path);
     let done = false;
@@ -184,11 +204,14 @@ const Net = {
       if (data && Array.isArray(data) && data.length > 0) {
         done = true;
         ref.off('value', handler);
+        this._opponentTeamUnsub = null;
         cb(data.map(deserializePokeFromNet));
       }
     };
     ref.on('value', handler);
-    this._unsubs.push(() => ref.off('value', handler));
+    const unsub = () => ref.off('value', handler);
+    this._opponentTeamUnsub = unsub;
+    this._unsubs.push(unsub);
   },
 
   /* ---- 選出後の交換フェーズ（対人戦のみ） ---- */

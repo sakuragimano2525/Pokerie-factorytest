@@ -1891,6 +1891,7 @@ function renderPickRow() {
 
 function showInitialPickOverlay() {
   clearPickTimer();
+  pickConfirmed = false;
   const ids = [...getFinalSpeciesIds()].sort(() => Math.random() - 0.5).slice(0, 6);
   pickPool = ids.map((id) => createRandomPokemon(id, 100));
   pickedIds = [];
@@ -1917,7 +1918,10 @@ $('pick-row').addEventListener('click', (e) => {
   renderPickRow();
 });
 
+let pickConfirmed = false;
 function confirmPick() {
+  if (pickConfirmed) return; // ボタン連打やタイマー競合による多重実行を防止
+  pickConfirmed = true;
   clearPickTimer();
   // 未選択が残っている場合は左（先頭）から自動補完
   if (pickedIds.length < 3) {
@@ -2204,6 +2208,7 @@ function startMultiplayerPick() {
   state.opponentName = Net.opponentName || '';
   readyBattleStarting = false;
   readyRoomState = { mine: false, opponent: false };
+  pickConfirmed = false;
   const ids = [...getFinalSpeciesIds()].sort(() => Math.random() - 0.5).slice(0, 6);
   pickPool = ids.map((id) => createRandomPokemon(id, 100));
   pickedIds = [];
@@ -2476,7 +2481,20 @@ async function onMultiplayerPickConfirm() {
   msgQueue = [];
   pushLogLine('相手の選出を待っています…');
 
+  // 通信の瞬断など何らかの理由で相手に自分のチームが届いていない場合に備え、
+  // 「相手の選出を待っています…」が一定時間続く間は自分のチームを定期的に再送信する。
+  // 既に相手が受信済みなら同じ内容を書き直すだけなので害はなく、
+  // これにより「対戦が始まらず固まる」不具合から自動的に復帰できる。
+  let opponentTeamReceived = false;
+  const resendInterval = setInterval(() => {
+    if (opponentTeamReceived) { clearInterval(resendInterval); return; }
+    Net.sendTeam(state.playerTeam).catch(() => {});
+  }, 4000);
+
   Net.onOpponentTeam(async (oppTeam) => {
+    opponentTeamReceived = true;
+    clearInterval(resendInterval);
+
     state.cpuTeam = oppTeam;
     state.cpuTeam.forEach(resetPokeForBattle);
     state.playerActive = state.playerTeam[0];
