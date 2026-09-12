@@ -14,6 +14,8 @@ const Net = {
   opponentName: '',
   ready: false,
   _unsubs: [],
+  _eventsRef: null,
+  _eventsHandler: null,
 
   init() {
     if (this.ready) return true;
@@ -274,12 +276,18 @@ const Net = {
 
   onEvent(cb) {
     if (!this.roomRef || this.isHost) return;
+    // 同じ購読を二重に張らないためのガード（再接続やコード再実行での多重登録を防止）
+    if (this._eventsRef) {
+      this._eventsRef.off('child_added', this._eventsHandler);
+    }
     const ref = this.roomRef.child('battle/events');
     const handler = (snap) => {
       const ev = snap.val();
-      if (ev) cb(ev);
+      if (ev) cb(ev, snap.key);
     };
     ref.on('child_added', handler);
+    this._eventsRef = ref;
+    this._eventsHandler = handler;
     this._unsubs.push(() => ref.off('child_added', handler));
   },
 

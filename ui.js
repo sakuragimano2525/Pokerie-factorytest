@@ -3097,12 +3097,22 @@ async function runMultiplayerRematchFlow() {
 let guestEventQueue = [];
 let guestProcessing = false;
 let guestTurnEndResolve = null;
+// ホストの clearEvents() とゲストの購読開始のタイミングがずれると、
+// 削除前の残存イベントや前回対戦分のイベントを Firebase の child_added が
+// 拾ってしまい、同じログが二重に再生されることがある（例: 「〇〇をくりだした！」が2回）。
+// イベントごとに一意な push キーで既処理を記録し、同じキーは絶対に二度処理しないことで
+// 二重再生を確実に防ぐ。
+let guestSeenEventKeys = new Set();
 
 function waitForGuestTurnEnd() {
   return new Promise((resolve) => { guestTurnEndResolve = resolve; });
 }
 
-function enqueueGuestEvent(ev) {
+function enqueueGuestEvent(ev, key) {
+  if (key !== undefined && key !== null) {
+    if (guestSeenEventKeys.has(key)) return; // 二重イベントは無視
+    guestSeenEventKeys.add(key);
+  }
   guestEventQueue.push(ev);
   if (!guestProcessing) processGuestEvents();
 }
@@ -3337,8 +3347,9 @@ async function runMultiplayerBattleGuest() {
   guestEventQueue = [];
   guestProcessing = false;
   guestTurnEndResolve = null;
+  guestSeenEventKeys = new Set(); // 前回対戦分のキーを引きずらないようリセット
 
-  Net.onEvent((ev) => enqueueGuestEvent(ev));
+  Net.onEvent((ev, key) => enqueueGuestEvent(ev, key));
 
   while (true) {
     if (state.playerTeam.every((p) => p.fainted)) return;
