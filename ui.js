@@ -232,7 +232,7 @@ const BATTLE_BGM_NAMES = {
   15: 'ポケモン-バトルタワー(剣盾)',
   16: 'ブルーアーカイブ-Cherry Merry Berry',
   17: 'ポケモン-戦闘！ソルガレオ・ルナアーラ(アレンジ)',
-  18: 'モンスターハンター-ゾ・シア',
+  18: 'メタルギアシリーズより',
   19: 'ポケモン-戦闘！パルデア四天王！(アレンジ)',
   20: '妖怪ウォッチ-VS妖怪',
 };
@@ -1803,6 +1803,14 @@ async function doSwitch(newActive, side) {
   if (outgoing && outgoing !== newActive) {
     outgoing.typeLockTurns = 0;
     outgoing.typeLockType = null;
+    // さいせいりょく：交代で場を離れた瞬間、最大HPの1/3を回復する（瀕死での退場では発動しない）
+    if (!outgoing.fainted && outgoing.ability === ABILITY.SAISEIRYOKU) {
+      const healAmt = Math.max(1, Math.floor(outgoing.maxHp / 3));
+      outgoing.currentHp = Math.min(outgoing.maxHp, outgoing.currentHp + healAmt);
+      queueMessage(`${outgoing.species.name}は交代した！`);
+      await drainMessages();
+      updateHud(outgoing, side === 'player' ? 'self' : 'opp');
+    }
   }
   newActive.side = side;
   newActive.deaigashiraLocked = false; // 場に出た最初のターンはであいがしら使用可能
