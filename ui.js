@@ -97,10 +97,15 @@ const AssetPreloader = (() => {
     for (let i = 1; i <= 20; i++) preloadImage(`./type${i}.png`);
   }
 
-  // BGM候補の事前ロード（click.mp3は専用プールで別途プリロード済み）
+  // BGM候補の事前ロード
+  // ※ iOS Safari/WebKitには、同時に保持できる<audio>要素（デコーダー）の数に上限があり、
+  //   これを超えると既存のAudio要素が予告なく無効化されることがある。
+  //   バトルBGM候補は20曲もあり、全曲を毎回事前ロードするとこの上限を超えやすく、
+  //   「効果音やBGMが消えたり復活したりする」というiPhone特有の不具合の主因になっていた。
+  //   そのため、軽量なメニュー曲だけを事前ロードし、バトルBGM本編は
+  //   実際に再生する1曲だけをその都度ロードする方式に変更する（loadAudioAssets参照）。
   function preloadAudioAssets() {
     preloadAudio('./menu.mp3');
-    for (let i = 1; i <= 20; i++) preloadAudio(`./${i}.mp3`);
   }
 
   // マップ背景画像（map1〜map20.png）の事前ロード
@@ -129,7 +134,8 @@ function setRandomBattleBackground() {
 
 /* ---------------- UIクリック効果音 ---------------- */
 // 連打しても遅延なく鳴らせるよう、複数のAudioインスタンスをプールして使い回す
-const CLICK_SOUND_POOL_SIZE = 6;
+// ※ iOSはHTMLAudioElementの同時保持数に上限があるため、プールは必要最小限に抑える
+const CLICK_SOUND_POOL_SIZE = 4;
 const clickSoundPool = [];
 let clickSoundIdx = 0;
 function initClickSoundPool() {
@@ -165,7 +171,8 @@ document.addEventListener('click', handleClickSoundTrigger, true);
 
 /* ---------------- バトル効果音（タイプ相性／ランク変化） ---------------- */
 // click.mp3と同じ「プール方式」で、連続再生してもラグなく鳴らせるようにする。
-const BATTLE_SFX_POOL_SIZE = 4;
+// ※ iOSはHTMLAudioElementの同時保持数に上限があるため、プールは必要最小限に抑える
+const BATTLE_SFX_POOL_SIZE = 3;
 const battleSfxPools = {};
 function getBattleSfxPool(path) {
   if (!battleSfxPools[path]) {
@@ -248,15 +255,27 @@ const BattleBgm = (() => {
     MenuBgm.stop();
     stop();
     const path = pickTrackPath();
-    const preloaded = AssetPreloader.audioBuffers.get(path);
-    const audio = preloaded ? preloaded : new Audio(path);
+    // BGM候補20曲は事前プリロードしていない（iOSのAudio要素数上限対策のため）。
+    // 実際に再生する1曲だけをここでロードする。
+    const audio = new Audio(path);
+    audio.preload = 'auto';
     audio.loop = true;
     audio.volume = 0.4;
     audio._iosUnlockToken = null; // iOSアンロック処理が後からこのインスタンスを止めないようにする
-    try { audio.currentTime = 0; } catch (e) {}
     currentAudio = audio;
     const p = audio.play();
-    if (p && p.catch) p.catch(() => {});
+    if (p && p.catch) {
+      p.catch(() => {
+        // iOSでブロックされて再生開始に失敗した場合、次にユーザーが画面のどこかを
+        // タップした瞬間に自動で再試行する（無音のまま気づかれないのを防ぐ）。
+        const retry = () => {
+          if (currentAudio !== audio) return; // その間に曲が切り替わっていたら何もしない
+          const p2 = audio.play();
+          if (p2 && p2.catch) p2.catch(() => {});
+        };
+        document.addEventListener('pointerdown', retry, { once: true, capture: true });
+      });
+    }
     return currentTrackNum;
   }
 
@@ -265,6 +284,10 @@ const BattleBgm = (() => {
       try {
         currentAudio.pause();
         currentAudio.currentTime = 0;
+        // src を空にしてブラウザにデコーダーリソースの解放を促す
+        // （iOSはAudio要素の同時保持数に上限があり、明示的な解放が安定動作の助けになる）
+        currentAudio.removeAttribute('src');
+        currentAudio.load();
       } catch (e) {}
       currentAudio = null;
     }
@@ -272,8 +295,9 @@ const BattleBgm = (() => {
   }
 
   function getCurrentTrackNum() { return currentTrackNum; }
+  function getCurrentAudioIfAny() { return currentAudio; }
 
-  return { start, stop, getCurrentTrackNum };
+  return { start, stop, getCurrentTrackNum, getCurrentAudioIfAny };
 })();
 
 /* ---------------- ホーム/選出/ルーム待機中のBGM ---------------- */
@@ -298,7 +322,17 @@ const MenuBgm = (() => {
     const a = getAudio();
     a._iosUnlockToken = null; // iOSアンロック処理が後からこのインスタンスを止めないようにする
     const p = a.play();
-    if (p && p.catch) p.catch(() => {});
+    if (p && p.catch) {
+      p.catch(() => {
+        // 再生開始に失敗した場合、次のタップで自動的に再試行する
+        const retry = () => {
+          if (!playing) return;
+          const p2 = a.play();
+          if (p2 && p2.catch) p2.catch(() => {});
+        };
+        document.addEventListener('pointerdown', retry, { once: true, capture: true });
+      });
+    }
   }
 
   function stop() {
@@ -311,7 +345,15 @@ const MenuBgm = (() => {
     }
   }
 
-  return { start, stop };
+  // バックグラウンド復帰時などに、「鳴っているはずなのに止まっている」状態を検知して再開する
+  function resumeIfNeeded() {
+    if (!playing || !audio) return;
+    if (!audio.paused) return;
+    const p = audio.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+
+  return { start, stop, resumeIfNeeded };
 })();
 
 function $(id) { return document.getElementById(id); }
@@ -3409,3 +3451,23 @@ function startMenuBgmOnFirstInteraction() {
 }
 document.addEventListener('pointerdown', startMenuBgmOnFirstInteraction, true);
 document.addEventListener('click', startMenuBgmOnFirstInteraction, true);
+
+// ---- iOS: バックグラウンド復帰時にBGMが鳴らなくなる問題への対策 ----
+// iOS Safari/WebViewでは、ホームボタンを押す・他アプリに切り替える・画面をロックするなどして
+// アプリがバックグラウンドに回ると、再生中の<audio>が強制的に一時停止される。
+// フォアグラウンドに戻った際にブラウザが自動で再開してくれるとは限らず、
+// 「さっきまで鳴っていたBGMが無音になる」「なぜか止まったり鳴ったりする」といった
+// 不安定な症状として現れる。document.visibilitychangeでこれを検知し、
+// 画面に戻ってきたタイミングで、鳴っているはずのBGMが止まっていれば再生を再開する。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  // バトル中はバトルBGM、それ以外の画面ではメニューBGMが鳴っているはずの状態。
+  // どちらも「鳴っているはずなのに止まっている(paused)」場合だけ再生を試みる。
+  const battleAudio = BattleBgm.getCurrentAudioIfAny ? BattleBgm.getCurrentAudioIfAny() : null;
+  if (battleAudio && battleAudio.paused) {
+    const p = battleAudio.play();
+    if (p && p.catch) p.catch(() => {});
+    return;
+  }
+  MenuBgm.resumeIfNeeded();
+});
