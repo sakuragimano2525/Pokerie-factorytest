@@ -3345,7 +3345,34 @@ showScreen('title');
 AssetPreloader.preloadAll();
 
 // ブラウザの自動再生制限のため、最初のユーザー操作でホームBGMを開始する
+// ---- iOS Safari 対策 ----
+// iOSのSafari/WebViewは「その<audio>要素自身に対して、ユーザー操作のコールスタック内で
+// 一度 play() を呼んだこと」がある要素しか、以後スクリプトからの再生を許可しない。
+// MenuBgm用の1個だけ再生しても、クリック音・バトル効果音・バトルBGM(20曲)用に
+// 別途生成してある大量のAudioインスタンスはロックされたままになり、
+// 「BGMは鳴るのに効果音や対戦中の曲だけ鳴らない」または「何も鳴らない」という
+// iPhoneでの不具合の主な原因になる。そこで最初のユーザー操作のタイミングで、
+// 存在する全Audioインスタンスに対して「即再生→即一時停止」を行い、まとめてアンロックする。
+function unlockAllAudioForIOS() {
+  const targets = [];
+  clickSoundPool.forEach((a) => targets.push(a));
+  Object.values(battleSfxPools).forEach((entry) => entry.pool.forEach((a) => targets.push(a)));
+  AssetPreloader.audioBuffers.forEach((a) => targets.push(a));
+  targets.forEach((a) => {
+    try {
+      const p = a.play();
+      if (p && p.then) {
+        p.then(() => {
+          try { a.pause(); a.currentTime = 0; } catch (e) {}
+        }).catch(() => {});
+      } else {
+        try { a.pause(); a.currentTime = 0; } catch (e) {}
+      }
+    } catch (e) {}
+  });
+}
 function startMenuBgmOnFirstInteraction() {
+  unlockAllAudioForIOS();
   MenuBgm.start();
   document.removeEventListener('pointerdown', startMenuBgmOnFirstInteraction, true);
   document.removeEventListener('click', startMenuBgmOnFirstInteraction, true);
