@@ -104,61 +104,6 @@ const AssetPreloader = (() => {
   return { preloadImage, preloadAudio, preloadAll, audioBuffers };
 })();
 
-/* =========================================================
-   iOS自動再生ポリシー対策
-   ---------------------------------------------------------
-   iOS Safari は「ユーザー操作の同期スタック内で play() を成功させた
-   Audio 要素」しか、その後自由に再生できない。
-   Android Chrome はこの制限が緩いため、プリロード要素でも鳴る。
-   ここでは最初のユーザー操作時に、全ての効果音・BGM候補を
-   無音（muted）で play() → pause() してアンロックする。
-   ========================================================= */
-let _audioUnlocked = false;
-function unlockAllAudioOnFirstInteraction() {
-  if (_audioUnlocked) return;
-  _audioUnlocked = true;
-
-  const tryUnlock = (a) => {
-    if (!a) return;
-    try {
-      const prevMuted = a.muted;
-      const prevVol = a.volume;
-      a.muted = true;
-      a.volume = 0;
-      const p = a.play();
-      const restore = () => {
-        try {
-          a.pause();
-          a.currentTime = 0;
-        } catch (e) {}
-        a.muted = prevMuted;
-        a.volume = prevVol;
-      };
-      if (p && p.then) {
-        p.then(restore).catch(() => {
-          a.muted = prevMuted;
-          a.volume = prevVol;
-        });
-      } else {
-        restore();
-      }
-    } catch (e) {}
-  };
-
-  // click.mp3 プール
-  clickSoundPool.forEach(tryUnlock);
-  // バトル効果音プール
-  Object.keys(battleSfxPools).forEach((path) => {
-    const entry = battleSfxPools[path];
-    if (entry && entry.pool) entry.pool.forEach(tryUnlock);
-  });
-  // BGM候補（menu.mp3 と 1〜20.mp3）。BgmPlayer が使用する Audio も含めて
-  // 全てのAudioElementをアンロック対象にする。
-  AssetPreloader.audioBuffers.forEach((a) => tryUnlock(a));
-  // BgmPlayer 内部で使っている Audio 要素（プリロード済みでない場合の保険）
-  tryUnlock(BgmPlayer.element);
-}
-
 /* ---------------- UIクリック効果音 ---------------- */
 // 連打しても遅延なく鳴らせるよう、複数のAudioインスタンスをプールして使い回す
 const CLICK_SOUND_POOL_SIZE = 6;
@@ -234,62 +179,10 @@ function playRankDownSound() { playBattleSfx('./fall.mp3'); }
 // click.mp3同様、あらかじめプールを生成しておき初回再生の遅延を防ぐ
 ['./supeff.mp3', './noteff.mp3', './hit.mp3', './sup.mp3', './fall.mp3'].forEach(getBattleSfxPool);
 
-/* =========================================================
-   BGMプレイヤー（MenuBgm / BattleBgm 共通）
-   ---------------------------------------------------------
-   iOS Safari は「一度アンロックに成功した Audio 要素」であれば、
-   その後 src を差し替えても自由に play() できる。
-   そこで menu.mp3 もバトルBGM(1〜20.mp3) も、単一の Audio 要素の
-   src を切り替えて再生する方式に統一する。
-   （プリロードは AssetPreloader 側でキャッシュ済みなので、
-     初回ロード遅延もほぼない）
-   ========================================================= */
-const BgmPlayer = (() => {
-  const audio = new Audio();
-  audio.loop = true;
-  audio.volume = 0.4;
-  audio.preload = 'auto';
-
-  let currentPath = null;
-  let playing = false;
-
-  function play(path, volume) {
-    currentPath = path;
-    if (volume !== undefined) audio.volume = volume;
-    try {
-      // 同じ曲を再生し直す場合はリセットしない（画面遷移での途切れ防止）
-      if (audio.src && !audio.src.endsWith(path)) {
-        audio.src = path;
-        try { audio.currentTime = 0; } catch (e) {}
-      } else if (!audio.src) {
-        audio.src = path;
-      }
-    } catch (e) {}
-    playing = true;
-    const p = audio.play();
-    if (p && p.catch) p.catch(() => {});
-  }
-
-  function stop() {
-    playing = false;
-    try {
-      audio.pause();
-      audio.currentTime = 0;
-    } catch (e) {}
-  }
-
-  return {
-    element: audio,
-    play,
-    stop,
-    isPlaying: () => playing,
-    currentPath: () => currentPath,
-    setVolume: (v) => { audio.volume = v; },
-  };
-})();
-
 /* ---------------- バトルBGM ---------------- */
 const BattleBgm = (() => {
+  let currentAudio = null;
+
   function pickTrackPath() {
     const n = rand(1, 20);
     return `./${n}.mp3`;
@@ -297,12 +190,26 @@ const BattleBgm = (() => {
 
   function start() {
     MenuBgm.stop();
+    stop();
     const path = pickTrackPath();
-    BgmPlayer.play(path, 0.4);
+    const preloaded = AssetPreloader.audioBuffers.get(path);
+    const audio = preloaded ? preloaded : new Audio(path);
+    audio.loop = true;
+    audio.volume = 0.4;
+    try { audio.currentTime = 0; } catch (e) {}
+    currentAudio = audio;
+    const p = audio.play();
+    if (p && p.catch) p.catch(() => {});
   }
 
   function stop() {
-    BgmPlayer.stop();
+    if (currentAudio) {
+      try {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      } catch (e) {}
+      currentAudio = null;
+    }
   }
 
   return { start, stop };
@@ -312,15 +219,33 @@ const BattleBgm = (() => {
 // バトル本編（トレーナー戦・対人戦）に入っている間以外、基本的にこれを鳴らし続ける。
 // すでに再生中なら再度呼ばれても再生し直さない（画面遷移のたびに音が途切れないように）。
 const MenuBgm = (() => {
+  let audio = null;
+  let playing = false;
+
+  function getAudio() {
+    if (audio) return audio;
+    const preloaded = AssetPreloader.audioBuffers.get('./menu.mp3');
+    audio = preloaded ? preloaded : new Audio('./menu.mp3');
+    audio.loop = true;
+    audio.volume = 0.4;
+    return audio;
+  }
+
   function start() {
-    // 既に menu.mp3 を再生中なら何もしない（画面遷移での途切れ防止）
-    if (BgmPlayer.isPlaying() && BgmPlayer.currentPath() === './menu.mp3') return;
-    BgmPlayer.play('./menu.mp3', 0.4);
+    if (playing) return;
+    playing = true;
+    const a = getAudio();
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {});
   }
 
   function stop() {
-    if (BgmPlayer.currentPath() === './menu.mp3') {
-      BgmPlayer.stop();
+    playing = false;
+    if (audio) {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch (e) {}
     }
   }
 
@@ -2076,12 +2001,13 @@ function forceLeaveOnRoomClosed() {
   roomClosedHandled = true;
   state.multiplayer = false;
   state.battleBusy = false;
+  readyListenersWired = false;
   BattleBgm.stop();
   try { $('pick-overlay').classList.remove('show'); } catch (e) {}
   try { $('negotiate-overlay').classList.remove('show'); } catch (e) {}
   try { $('nego-wait-overlay').classList.remove('show'); } catch (e) {}
   try { $('result-overlay').classList.remove('show'); } catch (e) {}
-  try { $('rematch-overlay').classList.remove('show'); } catch (e) {}
+  try { $('rematch-wait-overlay').classList.remove('show'); } catch (e) {}
   clearNegoTimer();
   clearPickTimer();
   Net.reset();
@@ -2090,8 +2016,64 @@ function forceLeaveOnRoomClosed() {
   alert('相手が退出したため、部屋を閉じました。');
 }
 
+/* ---- 準備完了ルーム（ソシャゲ風の1番/2番待機部屋） ---- */
+let readyRoomState = { mine: false, opponent: false };
+let readyBattleStarting = false;
+let readyListenersWired = false;
+
+function renderReadyRoom() {
+  const meName = state.playerName || '';
+  const oppName = state.opponentName || Net.opponentName || '';
+
+  const slot1Name = state.isHost ? meName : oppName;
+  const slot2Name = state.isHost ? oppName : meName;
+  const slot1Ready = state.isHost ? readyRoomState.mine : readyRoomState.opponent;
+  const slot2Ready = state.isHost ? readyRoomState.opponent : readyRoomState.mine;
+
+  const nameEl1 = $('ready-slot-1-name');
+  const nameEl2 = $('ready-slot-2-name');
+  nameEl1.textContent = slot1Name || '-';
+  nameEl1.classList.toggle('is-empty', !slot1Name);
+  nameEl2.textContent = slot2Name || '相手を待っています…';
+  nameEl2.classList.toggle('is-empty', !slot2Name);
+
+  $('ready-slot-1').classList.toggle('is-ready', !!slot1Ready);
+  $('ready-slot-2').classList.toggle('is-ready', !!slot2Ready);
+  $('ready-slot-1-badge').textContent = slot1Ready ? '準備完了' : '未準備';
+  $('ready-slot-2-badge').textContent = slot2Ready ? '準備完了' : '未準備';
+
+  const btn = $('btn-ready-toggle');
+  const opponentPresent = !!oppName;
+  btn.disabled = !opponentPresent;
+  btn.textContent = readyRoomState.mine ? '取り消す' : '準備完了';
+  btn.classList.toggle('primary', !readyRoomState.mine);
+
+  $('host-wait-hint').textContent = !opponentPresent
+    ? '友達にこの4ケタの番号を伝えてください'
+    : (readyRoomState.mine ? '相手の準備を待っています…' : 'じゅんびができたら「準備完了」を押してください');
+}
+
+function wireReadyRoomListeners() {
+  if (readyListenersWired) return;
+  readyListenersWired = true;
+  Net.onRoomClosed(() => forceLeaveOnRoomClosed());
+
+  Net.onReadyChange(({ mine, opponent }) => {
+    readyRoomState.mine = mine;
+    readyRoomState.opponent = opponent;
+    renderReadyRoom();
+    if (mine && opponent && !readyBattleStarting) {
+      readyBattleStarting = true;
+      setTimeout(() => { startMultiplayerPick(); }, 500);
+    }
+  });
+}
+
 async function startHostRoom() {
   roomClosedHandled = false;
+  readyBattleStarting = false;
+  readyListenersWired = false;
+  readyRoomState = { mine: false, opponent: false };
   state.isHost = true;
   let code = null;
   for (let i = 0; i < 8; i++) {
@@ -2105,51 +2087,54 @@ async function startHostRoom() {
     return;
   }
   state.roomId = code;
-  $('host-wait-title').textContent = 'ルームを作成しました';
-  $('host-wait-player-name').textContent = `${state.playerName} さん`;
+  state.opponentName = '';
   $('host-room-id').textContent = code;
-  $('host-wait-hint').textContent = '友達にこの4ケタの番号を伝えてください';
-  $('host-wait-cancel').textContent = 'キャンセル';
+  renderReadyRoom();
   showScreen('host-waiting');
   MenuBgm.start();
 
-  Net.onRoomClosed(() => forceLeaveOnRoomClosed());
+  wireReadyRoomListeners();
 
   Net.onGuestJoined((guestName) => {
     state.opponentName = guestName;
-    $('host-wait-hint').textContent = `${guestName} さんが入室しました！`;
-    setTimeout(() => { startMultiplayerPick(); }, 700);
+    renderReadyRoom();
   });
 }
 
 async function joinRoom(code) {
   roomClosedHandled = false;
+  readyBattleStarting = false;
+  readyListenersWired = false;
+  readyRoomState = { mine: false, opponent: false };
   state.isHost = false;
   const r = await Net.joinRoom(code, state.playerName);
   if (r === 'not-found') { alert('そのルームは見つかりませんでした。'); return; }
   if (r === 'full') { alert('そのルームは満員、またはすでに対戦中です。'); return; }
   if (r === 'error') { alert('接続に失敗しました。'); return; }
   state.roomId = code;
-  $('host-wait-title').textContent = 'ルームに参加しました';
-  $('host-wait-player-name').textContent = `${state.playerName} さん`;
+  state.opponentName = Net.opponentName || '';
   $('host-room-id').textContent = code;
-  $('host-wait-hint').textContent = `ホスト（${Net.opponentName} さん）の準備を待っています…`;
-  $('host-wait-cancel').textContent = 'もどる';
+  renderReadyRoom();
   showScreen('host-waiting');
   MenuBgm.start();
 
-  Net.onRoomClosed(() => forceLeaveOnRoomClosed());
-
-  Net.onStatusChange((status) => {
-    if (status === 'both-in') { startMultiplayerPick(); }
-  });
+  wireReadyRoomListeners();
 }
 
 function cancelHostRoom() {
   Net.leave();
   state.roomId = null;
   state.isHost = false;
+  readyRoomState = { mine: false, opponent: false };
+  readyListenersWired = false;
   showMultiplayerMenu();
+}
+
+function toggleReady() {
+  const next = !readyRoomState.mine;
+  readyRoomState.mine = next;
+  renderReadyRoom();
+  Net.setReady(next);
 }
 
 /* ---- 選出 ---- */
@@ -2158,6 +2143,8 @@ function startMultiplayerPick() {
   state.multiplayer = true;
   state.winStreak = 0;
   state.opponentName = Net.opponentName || '';
+  readyBattleStarting = false;
+  readyRoomState = { mine: false, opponent: false };
   const ids = [...getFinalSpeciesIds()].sort(() => Math.random() - 0.5).slice(0, 6);
   pickPool = ids.map((id) => createRandomPokemon(id, 100));
   pickedIds = [];
@@ -2499,10 +2486,22 @@ async function runMultiplayerBattleHost() {
       await drainMessages();
     }
 
+    if (guestAction.type === 'switch') {
+      const newC = state.cpuTeam[guestAction.idx];
+      if (newC && newC !== state.cpuActive && !newC.fainted) {
+        queueMessage(`相手は${state.cpuActive.species.name}をひっこめた！`);
+        await drainMessages();
+        await doSwitch(newC, 'cpu');
+        queueMessage(`相手は${newC.species.name}をくり出した！`);
+        await drainMessages();
+      }
+    }
+
     if (state.playerActive && !state.playerActive.fainted &&
         state.cpuActive && !state.cpuActive.fainted) {
       const playerAct = myAction.type === 'switch' ? { type: 'none' } : myAction;
-      await runTurn(playerAct, guestAction, state.playerActive, state.cpuActive,
+      const cpuAct = guestAction.type === 'switch' ? { type: 'none' } : guestAction;
+      await runTurn(playerAct, cpuAct, state.playerActive, state.cpuActive,
                     makeLogFn(), resolveImmediateSwitchMultiplayer);
       await drainMessages();
     }
@@ -2599,80 +2598,41 @@ async function endMultiplayerBattleHost(hostWon) {
 }
 
 /* =========================================================
-   対人戦終了後：連戦する/抜けるの選択フロー（ホスト・ゲスト共通）
+   対人戦終了後：自動的にルーム（準備完了待機部屋）へ戻る
    ========================================================= */
-async function runMultiplayerRematchFlow() {
+const RESULT_DISPLAY_MS = 2200;
+
+async function returnToReadyRoomAfterBattle() {
   const overlay = $('result-overlay');
   const waitOverlay = $('rematch-wait-overlay');
-  $('btn-result-next').style.display = 'none';
-  $('result-mp-actions').style.display = 'flex';
 
-  const choice = await new Promise((resolve) => {
-    const onRematch = () => {
-      $('btn-mp-rematch').removeEventListener('click', onRematch);
-      $('btn-mp-leave').removeEventListener('click', onLeave);
-      resolve('rematch');
-    };
-    const onLeave = () => {
-      $('btn-mp-rematch').removeEventListener('click', onRematch);
-      $('btn-mp-leave').removeEventListener('click', onLeave);
-      resolve('leave');
-    };
-    $('btn-mp-rematch').addEventListener('click', onRematch);
-    $('btn-mp-leave').addEventListener('click', onLeave);
-  });
-
+  // 結果表示をしばらく見せてから待機部屋へ
+  await new Promise((r) => setTimeout(r, RESULT_DISPLAY_MS));
   overlay.classList.remove('show');
-  $('result-mp-actions').style.display = 'none';
-  $('btn-result-next').style.display = '';
 
-  if (choice === 'leave') {
-    roomClosedHandled = true; // 自分から明示的に退出するので、切断検知の二重処理を防ぐ
-    await Net.leave();
-    state.multiplayer = false;
-    MenuBgm.start();
-    showScreen('title');
-    return;
-  }
-
-  // 連戦を希望 → 相手の意思を待つ
-  await Net.setRematchChoice('rematch');
   waitOverlay.classList.add('show');
-  $('rematch-wait-desc').textContent = '相手の返事を待っています…';
+  $('rematch-wait-title').textContent = 'ルームにもどっています';
+  $('rematch-wait-desc').textContent = 'もう一度「準備完了」を押すと再戦できます';
 
-  const opponentChoice = await new Promise((resolve) => {
-    Net.onOpponentRematchChoice((v) => resolve(v));
-  });
-
-  if (opponentChoice === 'leave') {
-    // 相手は退出済み（Net.leave()でルームを離れる可能性があるため、
-    // ack待ちはせずすぐに離脱処理へ進む）
-    waitOverlay.classList.remove('show');
-    roomClosedHandled = true; // 相手の退出はここで処理するので、切断検知の二重処理を防ぐ
-    alert('相手が退出したため、部屋を閉じました。');
-    await Net.leave();
-    state.multiplayer = false;
-    MenuBgm.start();
-    showScreen('title');
-    return;
-  }
-
-  // 相手の選択を受け取ったことを伝え、相手からのackも待つ。
-  // これにより、両者が確実に相手の選択を受信し終えてから
-  // rematchデータの削除（resetForNextBattle）に進めるので、
-  // 削除タイミングと選択受信タイミングの競合で片方が取り残されることがなくなる。
-  await Net.ackRematchChoice();
-  await Net.waitOpponentAck();
-
-  waitOverlay.classList.remove('show');
-
-  // 両者が連戦を希望 → 次戦の準備
+  // ルームのバトル/選出/交換データをクリアしてから、
+  // ホスト・ゲストの両方が確実に同じタイミングで待機部屋に戻れるようにする。
   if (state.isHost) {
     await Net.resetForNextBattle();
-  } else {
-    await Net.clearRematch();
   }
-  startMultiplayerPick();
+
+  waitOverlay.classList.remove('show');
+  state.multiplayer = false;
+  readyBattleStarting = false;
+  readyRoomState = { mine: false, opponent: false };
+  renderReadyRoom();
+  showScreen('host-waiting');
+  MenuBgm.start();
+
+  wireReadyRoomListeners();
+}
+
+async function runMultiplayerRematchFlow() {
+  await returnToReadyRoomAfterBattle();
 }
 
 /* =========================================================
@@ -2912,6 +2872,7 @@ $('input-room-code').addEventListener('keydown', (e) => {
 });
 
 $('host-wait-cancel').addEventListener('click', () => cancelHostRoom());
+$('btn-ready-toggle').addEventListener('click', () => toggleReady());
 
 // フルスクリーン化は document 全体の click リスナー（isFullscreenActive 判定つき）に
 // 一本化してあるため、タイトル画面限定のリスナーは不要（重複呼び出し防止のため削除）。
@@ -2922,15 +2883,9 @@ showScreen('title');
 // アセット（画像・効果音・BGM）を事前読み込みしておく
 AssetPreloader.preloadAll();
 
-// ブラウザの自動再生制限のため、最初のユーザー操作で
-// (1) 全オーディオのアンロック（iOS対策）と (2) ホームBGM開始 を行う。
+// ブラウザの自動再生制限のため、最初のユーザー操作でホームBGMを開始する
 function startMenuBgmOnFirstInteraction() {
-  // ---- iOS対策：全Audioを無音でアンロック ----
-  unlockAllAudioOnFirstInteraction();
-
-  // ---- ホームBGM開始 ----
   MenuBgm.start();
-
   document.removeEventListener('pointerdown', startMenuBgmOnFirstInteraction, true);
   document.removeEventListener('click', startMenuBgmOnFirstInteraction, true);
 }

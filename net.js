@@ -141,6 +141,32 @@ const Net = {
     this._unsubs.push(() => ref.off('value', handler));
   },
 
+  /* ---- 準備完了ルーム（ソシャゲ風の1番/2番待機部屋） ---- */
+  async setReady(ready) {
+    if (!this.roomRef) return;
+    const path = this.isHost ? 'ready/hostReady' : 'ready/guestReady';
+    await this.roomRef.child(path).set(!!ready);
+  },
+
+  // 自分・相手両方のready状態の変化を監視する（cbは {mine, opponent} を受け取る）
+  onReadyChange(cb) {
+    if (!this.roomRef) return;
+    const ref = this.roomRef.child('ready');
+    const handler = (snap) => {
+      const data = snap.val() || {};
+      const mine = this.isHost ? !!data.hostReady : !!data.guestReady;
+      const opponent = this.isHost ? !!data.guestReady : !!data.hostReady;
+      cb({ mine, opponent });
+    };
+    ref.on('value', handler);
+    this._unsubs.push(() => ref.off('value', handler));
+  },
+
+  async clearReady() {
+    if (!this.roomRef) return;
+    await this.roomRef.child('ready').remove();
+  },
+
   async sendTeam(team) {
     if (!this.roomRef) return;
     const path = this.isHost ? 'hostTeam' : 'guestTeam';
@@ -306,6 +332,7 @@ const Net = {
     await this.roomRef.child('battle').remove();
     await this.roomRef.child('nego').remove();
     await this.roomRef.child('rematch').remove();
+    await this.roomRef.child('ready').remove();
     await this.roomRef.child('hostTeam').remove();
     await this.roomRef.child('guestTeam').remove();
   },
@@ -329,6 +356,7 @@ const Net = {
           await this.roomRef.child('battle').remove();
           await this.roomRef.child('nego').remove();
           await this.roomRef.child('rematch').remove();
+          await this.roomRef.child('ready').remove();
         }
       } catch (e) {}
     }

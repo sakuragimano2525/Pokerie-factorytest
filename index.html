@@ -269,6 +269,110 @@ html,body{
   font-size: 13px;
 }
 
+/* ================= READY ROOM（ソシャゲ風・準備完了待機部屋） ================= */
+.ready-room-card{
+  padding: 26px 30px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  max-width: 92vw;
+  width: 380px;
+}
+.ready-room-roomid-label{
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--ink-soft);
+  letter-spacing: 2px;
+}
+.ready-room-roomid{
+  font-size: clamp(30px, 6vw, 44px);
+  font-weight: 900;
+  letter-spacing: 8px;
+  color: var(--accent-a);
+  padding: 8px 20px 8px 28px;
+  border-radius: var(--radius-md);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+.ready-room-slots{
+  width: 100%;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.ready-slot{
+  display: flex; align-items: center; gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  transition: box-shadow .2s ease;
+}
+.ready-slot.is-ready{
+  box-shadow: var(--shadow-inset-sm), inset 0 0 0 2px var(--accent-hp);
+}
+.ready-slot-num{
+  width: 30px; height: 30px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-light-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 900;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.ready-slot-name{
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ready-slot-name.is-empty{
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+.ready-slot-badge{
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  box-shadow: var(--shadow-light-sm);
+}
+.ready-slot.is-ready .ready-slot-badge{
+  background: var(--accent-hp);
+  color: #fff;
+  box-shadow: none;
+}
+.ready-room-hint{
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  margin: 0;
+  text-align: center;
+}
+.ready-room-btn-row{
+  display: flex; gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+.ready-room-btn-row .neu-btn{
+  flex: 1 1 auto;
+  padding: 13px 10px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+
 /* ================= MULTIPLAYER MODAL (name / join) ================= */
 .multi-modal-overlay{
   position: fixed; inset: 0; z-index: 100;
@@ -1264,17 +1368,29 @@ html,body{
     <button id="multi-back-to-title" class="neu-btn multi-menu-back" type="button">タイトルにもどる</button>
   </div>
 
-  <!-- ================= HOST / GUEST WAITING ================= -->
+  <!-- ================= READY ROOM（ホスト/ゲスト共通の準備完了待機部屋） ================= -->
   <div id="screen-host-waiting" class="screen">
-    <div class="host-wait-card">
-      <p class="host-wait-title" id="host-wait-title">ルームを作成しました</p>
-      <p class="host-wait-player-name" id="host-wait-player-name">- さん</p>
-      <span class="host-room-id-label">ルームID</span>
-      <div class="host-room-id" id="host-room-id">0000</div>
-      <p class="host-wait-hint" id="host-wait-hint">友達にこの4ケタの番号を伝えてください</p>
-      <div class="host-wait-spinner"></div>
+    <div class="ready-room-card">
+      <span class="ready-room-roomid-label">ルームID</span>
+      <div class="ready-room-roomid" id="host-room-id">0000</div>
+      <div class="ready-room-slots">
+        <div class="ready-slot" id="ready-slot-1">
+          <span class="ready-slot-num">1</span>
+          <span class="ready-slot-name" id="ready-slot-1-name">-</span>
+          <span class="ready-slot-badge" id="ready-slot-1-badge">未準備</span>
+        </div>
+        <div class="ready-slot" id="ready-slot-2">
+          <span class="ready-slot-num">2</span>
+          <span class="ready-slot-name is-empty" id="ready-slot-2-name">相手を待っています…</span>
+          <span class="ready-slot-badge" id="ready-slot-2-badge">未準備</span>
+        </div>
+      </div>
+      <p class="ready-room-hint" id="host-wait-hint">友達にこの4ケタの番号を伝えてください</p>
+      <div class="ready-room-btn-row">
+        <button id="host-wait-cancel" class="neu-btn" type="button">キャンセル</button>
+        <button id="btn-ready-toggle" class="neu-btn primary" type="button" disabled>準備完了</button>
+      </div>
     </div>
-    <button id="host-wait-cancel" class="neu-btn host-wait-cancel" type="button">キャンセル</button>
   </div>
 
   <!-- ================= TEAM REVEAL / REORDER ================= -->
@@ -1446,18 +1562,14 @@ html,body{
         <p class="result-title" id="result-title">WIN</p>
         <p class="result-desc" id="result-desc"></p>
         <button id="btn-result-next" class="neu-btn primary start-btn">つぎへ</button>
-        <div id="result-mp-actions" class="result-mp-actions" style="display:none;">
-          <button id="btn-mp-rematch" class="neu-btn primary start-btn">連戦する</button>
-          <button id="btn-mp-leave" class="neu-btn start-btn">抜ける</button>
-        </div>
       </div>
     </div>
 
-    <!-- 対人戦：連戦の相手待ち -->
+    <!-- 対人戦：終了後、ルームに戻る待機表示 -->
     <div class="result-overlay" id="rematch-wait-overlay">
       <div class="result-card">
-        <p class="result-title" id="rematch-wait-title">連戦を希望しています</p>
-        <p class="result-desc" id="rematch-wait-desc">相手の返事を待っています…</p>
+        <p class="result-title" id="rematch-wait-title">ルームにもどっています</p>
+        <p class="result-desc" id="rematch-wait-desc">もう一度「準備完了」を押すと再戦できます</p>
         <div class="host-wait-spinner"></div>
       </div>
     </div>
