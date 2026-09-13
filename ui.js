@@ -1344,6 +1344,7 @@ $('surrender-confirm').addEventListener('click', async () => {
     // まだ技選択中などでコマンドパネルが残っている場合は、ここでロックして
     // 二重操作や宙に浮いた入力待ちを防ぐ。
     clearCmdPanel();
+    clearTurnTimer();
     $('cmd-dock').classList.remove('dock-wide');
     setWatchLogButtonsActive(false);
     await Net.sendSurrender();
@@ -1744,8 +1745,49 @@ attachPartySwitchHandler();
 let turnResolve = null;
 let currentSurrenderUnsub = null; // ホスト側：ゲスト降参監視リスナーの解除関数（対戦をまたいで参照するためモジュールスコープに保持）
 
+/* ---- 対人戦：1ターンの持ち時間（60秒）---- */
+const TURN_TIME_LIMIT = 60;
+let turnTimerInterval = null;
+function clearTurnTimer() {
+  if (turnTimerInterval) { clearInterval(turnTimerInterval); turnTimerInterval = null; }
+  const badge = $('turn-timer-badge');
+  if (badge) { badge.style.display = 'none'; badge.classList.remove('warn'); }
+}
+function startTurnTimer(onTimeout) {
+  clearTurnTimer();
+  if (!state.multiplayer) return;
+  const badge = $('turn-timer-badge');
+  const num = $('turn-timer-num');
+  if (!badge || !num) return;
+  let remaining = TURN_TIME_LIMIT;
+  badge.style.display = 'flex';
+  badge.classList.remove('warn');
+  num.textContent = String(remaining);
+  turnTimerInterval = setInterval(() => {
+    remaining -= 1;
+    num.textContent = String(Math.max(0, remaining));
+    if (remaining <= 10) badge.classList.add('warn');
+    if (remaining <= 0) {
+      clearTurnTimer();
+      onTimeout();
+    }
+  }, 1000);
+}
+
+/* ---- 対人戦：「相手の選択を待っています…」表示 ---- */
+function showOpponentWaitingBadge() {
+  if (!state.multiplayer) return;
+  const badge = $('opponent-waiting-badge');
+  if (badge) badge.style.display = 'block';
+}
+function hideOpponentWaitingBadge() {
+  const badge = $('opponent-waiting-badge');
+  if (badge) badge.style.display = 'none';
+}
+
 function playerChooseMove(move) {
   const action = { type: 'move', move };
+  clearTurnTimer();
   clearCmdPanel();
   $('cmd-dock').classList.remove('dock-wide');
   setWatchLogButtonsActive(false);
@@ -1753,6 +1795,7 @@ function playerChooseMove(move) {
 }
 function playerChooseSwitch(idx) {
   const action = { type: 'switch', idx };
+  clearTurnTimer();
   clearCmdPanel();
   $('cmd-dock').classList.remove('dock-wide');
   setWatchLogButtonsActive(false);
@@ -1785,7 +1828,35 @@ function waitForPlayerAction() {
     }
   }
   renderActionMenu();
-  return new Promise((resolve) => { turnResolve = resolve; });
+  return new Promise((resolve) => {
+    turnResolve = resolve;
+    if (state.multiplayer) {
+      startTurnTimer(() => {
+        // 持ち時間切れ：場に出ているポケモンの4番目の技を自動選択する。
+        // 4番目が使用不可（PP切れ・ロック等）の場合は、使用可能な技の中から
+        // 先頭のものにフォールバックする（技が1つも出せない状況は通常発生しない）。
+        const active = state.playerActive;
+        let forced = active && active.moves ? active.moves[3] : null;
+        const isUsable = (m) => m && m.pp > 0 && !m.locked
+          && !isDeaigashiraLockedFor(active, m)
+          && !(active.typeLockTurns > 0 && active.typeLockType === m.type);
+        if (!isUsable(forced)) {
+          forced = (active && active.moves ? active.moves : []).find(isUsable) || forced;
+        }
+        clearCmdPanel();
+        $('cmd-dock').classList.remove('dock-wide');
+        setWatchLogButtonsActive(false);
+        if (turnResolve) {
+          const r = turnResolve; turnResolve = null;
+          if (forced) {
+            r({ type: 'move', move: forced });
+          } else {
+            r({ type: 'none' });
+          }
+        }
+      });
+    }
+  });
 }
 
 function updateFieldDisplay() {
@@ -2342,7 +2413,7 @@ function pickCardHtml(poke, idx) {
 function renderPickRow() {
   $('pick-row').innerHTML = pickPool.map((p, idx) => pickCardHtml(p, idx)).join('');
   $('pick-count').textContent = `${pickedIds.length} / 3 選択中`;
-  $('btn-pick-confirm').disabled = state.multiplayer ? false : pickedIds.length !== 3;
+  $('btn-pick-confirm').disabled = pickedIds.length !== 3;
 }
 
 function showInitialPickOverlay() {
@@ -2395,7 +2466,6 @@ function confirmPick() {
 }
 
 $('btn-pick-confirm').addEventListener('click', () => {
-  if (state.multiplayer) { confirmPick(); return; }
   if (pickedIds.length !== 3) return;
   confirmPick();
 });
@@ -2705,6 +2775,50 @@ function startNegoTimer(onTimeout) {
   }, 1000);
 }
 
+function startNegoTimer(onTimeout) {
+  clearNegoTimer();
+  let remaining = NEGO_TIME_LIMIT;
+  const badge = $('nego-timer-badge');
+  const num = $('nego-timer-num');
+  badge.classList.remove('warn');
+  num.textContent = String(remaining);
+  negoTimerInterval = setInterval(() => {
+    remaining -= 1;
+    num.textContent = String(Math.max(0, remaining));
+    if (remaining <= 10) badge.classList.add('warn');
+    if (remaining <= 0) {
+      clearNegoTimer();
+      onTimeout();
+    }
+  }, 1000);
+}
+
+/* ---- 「手持ちを変える」中（ランダム提示〜交換相手選び）専用のタイマー ----
+   negotiate-overlay用のタイマーとは独立しており、この間はnegotiate側の
+   タイマーを止めておく。時間切れの場合は選択をキャンセルして
+   negotiate-overlay に戻り、そこで通常タイマーを仕切り直す。 */
+let negoSwapTimerInterval = null;
+function clearNegoSwapTimer() {
+  if (negoSwapTimerInterval) { clearInterval(negoSwapTimerInterval); negoSwapTimerInterval = null; }
+}
+function startNegoSwapTimer(onTimeout) {
+  clearNegoSwapTimer();
+  let remaining = NEGO_TIME_LIMIT;
+  const badges = [$('nego-swap-timer-badge'), $('nego-swap-timer-badge-2')];
+  const nums = [$('nego-swap-timer-num'), $('nego-swap-timer-num-2')];
+  badges.forEach((b) => b && b.classList.remove('warn'));
+  nums.forEach((n) => { if (n) n.textContent = String(remaining); });
+  negoSwapTimerInterval = setInterval(() => {
+    remaining -= 1;
+    nums.forEach((n) => { if (n) n.textContent = String(Math.max(0, remaining)); });
+    if (remaining <= 10) badges.forEach((b) => b && b.classList.add('warn'));
+    if (remaining <= 0) {
+      clearNegoSwapTimer();
+      onTimeout();
+    }
+  }, 1000);
+}
+
 function negoCardHtml(p, idx) {
   const effectiveTypes = getEffectiveTypesForDisplay(p);
   const typeDisplay = effectiveTypes.map(t => typeChipHtml(t)).join('');
@@ -2778,16 +2892,29 @@ function runNegotiatePhase() {
     };
     const onSwapClick = () => {
       if (negoSwapsLeft <= 0) return;
-      openNegoSwapOverlay(() => {
-        negoSwapsLeft -= 1;
+      // スワップ選択中はnegotiate-overlay用タイマーを止め、専用タイマーに切り替える。
+      clearNegoTimer();
+      const backToNegotiate = () => {
         renderNegoCards();
+        $('negotiate-overlay').classList.add('show');
         startNegoTimer(() => {
           $('btn-nego-confirm').removeEventListener('click', onConfirmClick);
           $('btn-nego-reorder').removeEventListener('click', onReorderClick);
           $('btn-nego-swap').removeEventListener('click', onSwapClick);
           finishMine();
         });
-      });
+      };
+      openNegoSwapOverlay(
+        () => {
+          // 交換完了
+          negoSwapsLeft -= 1;
+          backToNegotiate();
+        },
+        () => {
+          // 時間切れによるキャンセル：何も交換せずに選出画面へ戻る
+          backToNegotiate();
+        }
+      );
     };
 
     $('btn-nego-confirm').addEventListener('click', onConfirmClick);
@@ -2855,7 +2982,7 @@ $('btn-nego-reorder-done').addEventListener('click', () => {
 /* ---- 手持ちを変える（ランダム3匹から1匹→手持ちの1匹と交換） ---- */
 let negoSwapPool = [];
 
-function openNegoSwapOverlay(onDone) {
+function openNegoSwapOverlay(onDone, onCancel) {
   const ids = [...getFinalSpeciesIds()].sort(() => Math.random() - 0.5).slice(0, 3);
   negoSwapPool = ids.map((id) => createRandomPokemon(id, 100));
   const offerRow = $('nego-swap-offer-row');
@@ -2864,6 +2991,16 @@ function openNegoSwapOverlay(onDone) {
   $('nego-swap-overlay').classList.add('show');
 
   // 「やめる」で選び直し（リセマラ）できないよう、一度開いたら必ず1匹選んで交換する仕様。
+  // ただし、時間切れの場合は交換自体をキャンセルして選出画面（negotiate-overlay）に戻す。
+
+  let settled = false;
+  startNegoSwapTimer(() => {
+    if (settled) return;
+    settled = true;
+    offerRow.removeEventListener('click', onOfferClick);
+    $('nego-swap-overlay').classList.remove('show');
+    onCancel();
+  });
 
   const onOfferClick = async (e) => {
     const infoBtn = e.target.closest('.tpc-info-btn');
@@ -2878,20 +3015,31 @@ function openNegoSwapOverlay(onDone) {
     const chosen = negoSwapPool[offerIdx];
     const ok = await askConfirm(`${chosen.species.name}をもらいますか？`);
     if (!ok) return;
+    if (settled) return;
     offerRow.removeEventListener('click', onOfferClick);
+    clearNegoSwapTimer();
     $('nego-swap-overlay').classList.remove('show');
-    openNegoSwapReplaceOverlay(chosen, onDone);
+    openNegoSwapReplaceOverlay(chosen, onDone, onCancel);
   };
 
   offerRow.addEventListener('click', onOfferClick);
 }
 
-function openNegoSwapReplaceOverlay(incoming, onDone) {
+function openNegoSwapReplaceOverlay(incoming, onDone, onCancel) {
   const replaceOverlay = $('nego-swap-replace-overlay');
   const replaceRow = $('nego-swap-replace-row');
   $('nego-swap-replace-title').textContent = `${incoming.species.name}と交換するポケモンをえらんでください`;
   replaceRow.innerHTML = state.playerTeam.map((p, idx) => tradeCardHtml(p, idx, false)).join('');
   replaceOverlay.classList.add('show');
+
+  let settled = false;
+  startNegoSwapTimer(() => {
+    if (settled) return;
+    settled = true;
+    replaceRow.removeEventListener('click', onReplaceClick);
+    replaceOverlay.classList.remove('show');
+    onCancel();
+  });
 
   const onReplaceClick = async (e) => {
     const infoBtn = e.target.closest('.tpc-info-btn');
@@ -2906,6 +3054,9 @@ function openNegoSwapReplaceOverlay(incoming, onDone) {
     const outgoing = state.playerTeam[replaceIdx];
     const ok = await askConfirm(`${outgoing.species.name}と${incoming.species.name}を交換しますか？`);
     if (!ok) return;
+    if (settled) return;
+    settled = true;
+    clearNegoSwapTimer();
     replaceRow.removeEventListener('click', onReplaceClick);
     replaceOverlay.classList.remove('show');
     $('negotiate-overlay').classList.add('show');
@@ -3069,6 +3220,7 @@ async function runMultiplayerBattleHost() {
 
     const myAction = await waitForPlayerAction();
     await Net.sendAction(myAction);
+    showOpponentWaitingBadge();
 
     const guestRaw = await new Promise((resolve) => {
       if (surrenderedByOpponent) { resolve('__surrender__'); return; }
@@ -3079,6 +3231,7 @@ async function runMultiplayerBattleHost() {
         if (surrenderedByOpponent) finish('__surrender__');
       }, 200);
     });
+    hideOpponentWaitingBadge();
     if (guestRaw === '__surrender__') {
       if (unsubSurrender) unsubSurrender();
       await endMultiplayerBattleHost(true);
@@ -3134,9 +3287,11 @@ async function resolveImmediateSwitchMultiplayer(side) {
     }
     if (!hasAliveBackup(state.cpuTeam, outgoing)) return null;
     Net.pushEvent({ k: 'force-switch', s: 'cpu' });
+    showOpponentWaitingBadge();
     const raw = await new Promise((resolve) => {
       Net.waitForOpponentAction(resolve);
     });
+    hideOpponentWaitingBadge();
     const idx = raw && typeof raw.idx === 'number' ? raw.idx : 0;
     const next = state.cpuTeam[idx] || state.cpuTeam.find((p) => p !== outgoing && !p.fainted);
     if (!next) return null;
@@ -3172,9 +3327,11 @@ async function postTurnCleanupMultiplayerHost() {
     await playFaint('opp');
     if (state.cpuTeam.every((p) => p.fainted)) break;
     Net.pushEvent({ k: 'force-switch', s: 'cpu' });
+    showOpponentWaitingBadge();
     const raw = await new Promise((resolve) => {
       Net.waitForOpponentAction(resolve);
     });
+    hideOpponentWaitingBadge();
     const idx = raw && typeof raw.idx === 'number' ? raw.idx : 0;
     const next = state.cpuTeam[idx] || state.cpuTeam.find((p) => !p.fainted);
     if (!next) break;
@@ -3198,6 +3355,8 @@ async function postTurnCleanupMultiplayerHost() {
 
 async function endMultiplayerBattleHost(hostWon) {
   state.battleBusy = false;
+  clearTurnTimer();
+  hideOpponentWaitingBadge();
   BattleBgm.stop();
   if (currentSurrenderUnsub) { currentSurrenderUnsub(); currentSurrenderUnsub = null; }
   await Net.clearSurrenderFlags();
@@ -3528,6 +3687,8 @@ async function handleGuestEvent(ev) {
 
   if (ev.k === 'end') {
     state.battleBusy = false;
+    clearTurnTimer();
+    hideOpponentWaitingBadge();
     BattleBgm.stop();
     const guestWon = !ev.win;
     const overlay = $('result-overlay');
@@ -3585,7 +3746,9 @@ async function runMultiplayerBattleGuest() {
 
     const myAction = await waitForPlayerAction();
     await Net.sendAction(myAction);
+    showOpponentWaitingBadge();
     await waitForGuestTurnEnd();
+    hideOpponentWaitingBadge();
   }
 }
 

@@ -638,6 +638,57 @@ html,body{
   flex-direction: row;
 }
 
+/* ================= 対人戦：持ち時間タイマー／相手待機表示 ================= */
+.turn-timer-badge{
+  position:absolute;
+  top: 4%;
+  right: 2%;
+  z-index: 20;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-width: 52px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #6b8bff, #4a68d9);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  color:#fff;
+  font-weight:900;
+}
+.turn-timer-badge.warn{
+  background: linear-gradient(135deg, #e0596b, #c23a4d);
+  animation: turnTimerPulse 0.6s infinite;
+}
+@keyframes turnTimerPulse{
+  0%,100%{ transform: scale(1); }
+  50%{ transform: scale(1.08); }
+}
+.turn-timer-label{ font-size: 9px; opacity:0.85; line-height:1.2; }
+.turn-timer-num{ font-size: 18px; line-height:1.2; }
+
+.opponent-waiting-badge{
+  position:absolute;
+  top: 4%;
+  right: 2%;
+  z-index: 20;
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: rgba(40,40,50,0.78);
+  color:#fff;
+  font-size: 12px;
+  font-weight:700;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  white-space: nowrap;
+}
+
+@media (max-width: 480px){
+  .turn-timer-badge{ min-width:44px; padding:3px 6px; }
+  .turn-timer-label{ font-size:8px; }
+  .turn-timer-num{ font-size:15px; }
+  .opponent-waiting-badge{ font-size:10px; padding:5px 9px; }
+}
+
 .sprite-slot{
   position:relative;
   width: 150px; height: 150px;
@@ -1748,6 +1799,9 @@ html,body{
   <!-- NEGOTIATE: swap offer (ランダム3匹から選ぶ) -->
   <div class="trade-overlay" id="nego-swap-overlay">
     <div class="trade-card">
+      <div class="pick-timer-badge" id="nego-swap-timer-badge">
+        <span id="nego-swap-timer-num">30</span>
+      </div>
       <p class="trade-title">このポケモンの中から選んでください</p>
       <div class="trade-offer-row" id="nego-swap-offer-row"></div>
     </div>
@@ -1756,6 +1810,9 @@ html,body{
   <!-- NEGOTIATE: swap replace (だれと交換するか) -->
   <div class="trade-overlay" id="nego-swap-replace-overlay">
     <div class="trade-card">
+      <div class="pick-timer-badge" id="nego-swap-timer-badge-2">
+        <span id="nego-swap-timer-num-2">30</span>
+      </div>
       <p class="trade-title" id="nego-swap-replace-title">だれと交換しますか？</p>
       <div class="trade-offer-row" id="nego-swap-replace-row"></div>
     </div>
@@ -1775,6 +1832,13 @@ html,body{
       <div class="battle-field-bg" id="battle-field-bg"></div>
       <div class="weather-fx-layer" id="weather-fx-layer"></div>
       <div class="special-fx-layer" id="special-fx-layer"></div>
+
+      <!-- 対人戦：持ち時間タイマー／相手待機表示（右上・邪魔にならない位置） -->
+      <div class="turn-timer-badge" id="turn-timer-badge" style="display:none;">
+        <span class="turn-timer-label">のこり時間</span>
+        <span class="turn-timer-num" id="turn-timer-num">60</span>
+      </div>
+      <div class="opponent-waiting-badge" id="opponent-waiting-badge" style="display:none;">相手の選択を待っています…</div>
 
       <div class="battler-row row-opp">
         <div class="hud hud-opp" id="hud-opp">
