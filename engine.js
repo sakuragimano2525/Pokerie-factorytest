@@ -2424,7 +2424,10 @@ function weatherTerrainScoreMult(moveType, moveId) {
   return mult;
 }
 
-function chooseCpuAction(cpuPoke, playerPoke) {
+// cpuTeam を渡した場合のみ、「持ち技が全ていまひとつ以下の時、弱点をつける手持ちへ交代する」
+// 判定を行う（ゆびをふるより優先。弱点をつける控えがいなければ従来通りゆびをふる優先）。
+// cpuTeam省略時（既存呼び出し箇所等）は交代判定を行わず、これまで通り技のみを返す。
+function chooseCpuAction(cpuPoke, playerPoke, cpuTeam) {
   // はかいこうせん等の反動：次のターンは強制的に動けないので、技選択自体を行わない。
   // （実際に行動を封じる処理は checkCanMove 側で行われるため、ここではダミーの
   //   アクションを返すだけでよい）
@@ -2448,6 +2451,28 @@ function chooseCpuAction(cpuPoke, playerPoke) {
     const forced = cpuPoke.moves.find(m => m.id === cpuPoke.encoreMoveId);
     if (forced && forced.pp > 0 && !forced.locked) {
       return { type: 'move', move: forced };
+    }
+  }
+
+  // 持ち技が全て「いまひとつ以下」の場合、ゆびをふるより優先して
+  // プレイヤーの場のポケモンに弱点をつける（攻撃/特殊で効果抜群）控えがいれば交代する。
+  // バインド中（交代不可）はこの判定自体をスキップし、従来通り技を選ぶ。
+  if (Array.isArray(cpuTeam) && !(cpuPoke.bindTurns > 0)) {
+    const defTypesForCheck = getEffectiveTypes(playerPoke);
+    const allIneffective = defTypesForCheck && defTypesForCheck.length > 0 &&
+      usable.some((m) => isDamagingMoveAI(m)) &&
+      usable.every((m) => {
+        if (!isDamagingMoveAI(m)) return true;
+        const effType = resolveEffectiveMoveType(m, battleField);
+        const mult = getTypeEffectiveness(effType, defTypesForCheck[0], defTypesForCheck[1], m.id);
+        return mult < 1;
+      });
+    if (allIneffective) {
+      const switchTarget = findCpuSwitchInForWeakness(cpuTeam, cpuPoke, playerPoke);
+      if (switchTarget) {
+        const idx = cpuTeam.indexOf(switchTarget);
+        if (idx >= 0) return { type: 'switch', idx };
+      }
     }
   }
 
@@ -2590,6 +2615,26 @@ function _hasOtherAttackOfTypeAI(usableMoves, moveType, excludeMoveId) {
 function isAbilityTypeImmuneAI(moveType, ability) {
   if (ability === ABILITY.FUYU && moveType === 'ground') return true;
   return TYPE_ABSORB_ABILITY_TYPE[ability] === moveType;
+}
+
+// 控えの中から、プレイヤーの場のポケモンに「弱点をつける」（攻撃/特殊技で効果抜群＝2倍以上）
+// 技を持つポケモンを探す。変化技は対象外。瀕死・場に出ている本人は除外。
+// 複数見つかった場合は先頭（=手持ちの並び順で最初に見つかったもの）を返す。
+function findCpuSwitchInForWeakness(cpuTeam, cpuActive, playerPoke) {
+  const defTypes = getEffectiveTypes(playerPoke);
+  if (!defTypes || defTypes.length === 0) return null;
+  for (const candidate of cpuTeam) {
+    if (!candidate || candidate === cpuActive || candidate.fainted) continue;
+    const hasSuperEffective = (candidate.moves || []).some((m) => {
+      if (!m || m.category === 'status') return false; // 攻撃・特殊のみ（変化技は除外）
+      const effType = resolveEffectiveMoveType(m, battleField);
+      if (isAbilityTypeImmuneAI(effType, playerPoke.ability)) return false;
+      const mult = getTypeEffectiveness(effType, defTypes[0], defTypes[1], m.id);
+      return mult >= 2;
+    });
+    if (hasSuperEffective) return candidate;
+  }
+  return null;
 }
 
 // 原作 chooseTrainerAttack の移植版。シングルバトル専用（このゲームはダブルバトル非対応）。

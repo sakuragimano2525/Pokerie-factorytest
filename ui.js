@@ -2141,6 +2141,13 @@ async function runBattleLoop() {
     const playerAction = await waitForPlayerAction();
 
     if (playerAction.type === 'switch') {
+      // プレイヤーが自分から交代した場合、CPUは「交代前のポケモンに対して選んでいたはずの技」を
+      // そのまま使う（交代後のポケモンを見てから技を選び直す＝後出しで一番刺さる技を撃たれる、
+      // という不自然な後出し行動を防ぐため）。交代前の時点で先に技を決めておく。
+      const preSwitchCpuAction = (!state.cpuActive.fainted)
+        ? chooseCpuAction(state.cpuActive, state.playerActive, state.cpuTeam)
+        : null;
+
       const newP = state.playerTeam[playerAction.idx];
       queueMessage(`${state.playerActive.species.name}、もどれ！`);
       await drainMessages();
@@ -2148,8 +2155,14 @@ async function runBattleLoop() {
       queueMessage(`ゆけっ！${newP.species.name}！`);
       await drainMessages();
       if (!state.playerActive.fainted) {
-        const cpuAction = chooseCpuAction(state.cpuActive, state.playerActive);
-        await runTurn({ type: 'none' }, cpuAction, state.playerActive, state.cpuActive, makeLogFn(), resolveImmediateSwitch);
+        // 交代前に決めた行動が「技」ならそれをそのまま維持する（要件1）。
+        // 交代前に決めた行動が「弱点をつく控えへの交代」だった場合は、プレイヤーの
+        // 交代後のポケモンを基準に判定をし直す（元のポケモン基準の交代判断を、
+        // 別のポケモンが出てきた状況にそのまま適用するのは不自然なため）。
+        const cpuAction = (preSwitchCpuAction && preSwitchCpuAction.type === 'move')
+          ? preSwitchCpuAction
+          : chooseCpuAction(state.cpuActive, state.playerActive, state.cpuTeam);
+        await runCpuAction(cpuAction, { type: 'none' });
         await drainMessages();
       }
       await postTurnCleanupAndRender();
@@ -2157,12 +2170,36 @@ async function runBattleLoop() {
       continue;
     }
 
-    const cpuAction = chooseCpuAction(state.cpuActive, state.playerActive);
-    await runTurn(playerAction, cpuAction, state.playerActive, state.cpuActive, makeLogFn(), resolveImmediateSwitch);
+    const cpuAction = chooseCpuAction(state.cpuActive, state.playerActive, state.cpuTeam);
+    await runCpuAction(cpuAction, playerAction);
     await drainMessages();
     await postTurnCleanupAndRender();
     state.turnNumber++;
   }
+}
+
+// CPUの行動（技 or 弱点をつく自発交代）を実行する共通ヘルパー。
+// CPUが「交代」を選んだ場合は、まずポケモンを交代させてからそのターンの残りの
+// プレイヤー行動（あれば）を処理する。原作同様、CPU側の交代を選んだターンは
+// 交代してきたポケモンが技を出すことはない（交代のみでターン消費）。
+async function runCpuAction(cpuAction, playerAction) {
+  if (cpuAction.type === 'switch') {
+    const outgoing = state.cpuActive;
+    const newC = state.cpuTeam[cpuAction.idx];
+    if (newC && newC !== outgoing && !newC.fainted) {
+      queueMessage(`相手は${outgoing.species.name}をひっこめた！`);
+      await drainMessages();
+      await doSwitch(newC, 'cpu');
+      queueMessage(`相手は${newC.species.name}をくり出した！`);
+      await drainMessages();
+    }
+    // CPUは交代のみでこのターンを終えるが、プレイヤー側の行動（技）は通常通り処理する。
+    if (playerAction && playerAction.type === 'move' && !state.playerActive.fainted && !state.cpuActive.fainted) {
+      await runTurn(playerAction, { type: 'none' }, state.playerActive, state.cpuActive, makeLogFn(), resolveImmediateSwitch);
+    }
+    return;
+  }
+  await runTurn(playerAction || { type: 'none' }, cpuAction, state.playerActive, state.cpuActive, makeLogFn(), resolveImmediateSwitch);
 }
 
 async function postTurnCleanupAndRender() {
@@ -3428,6 +3465,14 @@ function enqueueGuestEvent(ev, key) {
   if (key !== undefined && key !== null) {
     if (guestSeenEventKeys.has(key)) return; // 二重イベントは無視
     guestSeenEventKeys.add(key);
+  }
+  // ホストから最初のイベント（技演出等の 'msg' や 'sprite'）が届いた時点で、
+  // 「相手の選択を待っています…」バッジを消す。ホスト側は相手の行動を受信した
+  // 瞬間にバッジを消しているのに対し、ゲスト側は従来 turn-end（そのターンの
+  // 演出が全て終わった後）まで待っていたため、技の演出中もバッジが
+  // 消えないままになっていた不具合を修正する。
+  if (ev && (ev.k === 'msg' || ev.k === 'sprite' || ev.k === 'turn-end')) {
+    hideOpponentWaitingBadge();
   }
   guestEventQueue.push(ev);
   if (!guestProcessing) processGuestEvents();
