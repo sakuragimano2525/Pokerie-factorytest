@@ -1628,17 +1628,13 @@ function executeMove(attacker, defender, move, logFn) {
     return;
   }
   if (move.id === 180) { // テラーバインド
-    if (attacker.side === 'player' && defender.side === 'cpu') {
-      const unlockable = defender.moves.filter(m => m && !m.locked);
-      if (unlockable.length > 0) {
-        const target = pick(unlockable);
-        target.locked = true;
-        logFn(`${defender.species.name}の${target.name}が封じられた！`);
-      } else {
-        logFn(`しかし、全ての技が既に封じられている！`);
-      }
+    const unlockable = defender.moves.filter(m => m && !m.locked);
+    if (unlockable.length > 0) {
+      const target = pick(unlockable);
+      target.locked = true;
+      logFn(`${defender.species.name}の${target.name}が封じられた！`);
     } else {
-      logFn(`テラーバインドはNPCには効果がないようだ…`);
+      logFn(`しかし、全ての技が既に封じられている！`);
     }
     return;
   }
@@ -1979,6 +1975,19 @@ function executeMove(attacker, defender, move, logFn) {
       defender.tauntTurns = 3;
       logFn(`${defender.species.name}は挑発された！`);
       return;
+    }
+
+    // ---- はねやすめ・じこさいせい等：ダメージを伴わない自己回復技 ----
+    // drainRatioは通常「与えたダメージ量に対する回復率」だが、
+    // 変化技（威力なし＝ダメージを与えない）の場合は「最大HPに対する回復率」として扱う。
+    if (move.drainRatio) {
+      if (attacker.currentHp >= attacker.maxHp) {
+        logFn(`しかし${attacker.species.name}のHPは満タンだった！`);
+      } else {
+        const healAmt = Math.max(1, Math.floor(attacker.maxHp * move.drainRatio));
+        attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + healAmt);
+        logFn(`${attacker.species.name}は体力を回復した！`, { hit: attacker.side });
+      }
     }
 
     if (!suppressSecondary) applyRankChange(attacker, move.selfRank, logFn, null, defender);
