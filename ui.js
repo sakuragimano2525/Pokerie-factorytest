@@ -896,18 +896,50 @@ function playSpecialMoveEffect(moveId) {
 }
 
 /* ---------------- Command panel rendering ---------------- */
+// cmd-panel を空にする前に、必ず act-log / act-watch を cmd-dock 直下へ退避させる共通ヘルパー。
+// renderMoveMenu 実行中はこの2つのボタンが panel の子要素になっているため、
+// 何も考えずに panel.innerHTML = '' すると、その要素自体が破棄されて
+// 以後 $('act-log') / $('act-watch') が二度と取得できなくなる（＝反応しなくなる）。
+// panel を空にする箇所は必ずこの関数を経由させること。
+function clearCmdPanel() {
+  const dock = $('cmd-dock');
+  const panel = $('cmd-panel');
+  const logBtn = $('act-log');
+  const watchBtn = $('act-watch');
+  if (dock && panel) {
+    if (logBtn && logBtn.parentElement === panel) dock.insertBefore(logBtn, panel);
+    if (watchBtn && watchBtn.parentElement === panel) dock.insertBefore(watchBtn, panel);
+  }
+  if (panel) panel.innerHTML = '';
+}
+
 function renderActionMenu() {
   closeWatchOverlay();
   closeLogOverlay();
   const dock = $('cmd-dock');
   dock.classList.remove('dock-wide');
   const panel = $('cmd-panel');
+
+  // panel を空にする前に act-log / act-watch を安全に退避（詳細はclearCmdPanel参照）。
+  clearCmdPanel();
+
   panel.style.cssText = '';
   panel.className = 'cmd-panel action-menu';
   panel.innerHTML = `
     <button class="neu-btn cmd-btn" id="act-fight">たたかう</button>
     <button class="neu-btn cmd-btn" id="act-switch">ポケモン</button>
   `;
+  // cmd-dock 直下での並び順を「降参する→ログを見る→様子を見る→panel」に揃える。
+  const logBtn = $('act-log');
+  const watchBtn = $('act-watch');
+  const surrenderBtn = $('act-surrender');
+  if (logBtn && surrenderBtn && logBtn.previousElementSibling !== surrenderBtn) {
+    dock.insertBefore(logBtn, panel);
+  }
+  if (watchBtn && logBtn && watchBtn.previousElementSibling !== logBtn) {
+    dock.insertBefore(watchBtn, panel);
+  }
+  if (surrenderBtn) surrenderBtn.disabled = false;
   setWatchLogButtonsActive(true);
   $('act-watch').onclick = () => openWatchOverlay();
   $('act-fight').addEventListener('click', () => renderMoveMenu());
@@ -935,9 +967,20 @@ function isTrappedByKagefumi(self, opponent) {
 }
 
 function isDeaigashiraLockedFor(poke, m) {
-  // であいがしらは場に出た1ターン目（turnsOnField === 0）のみ使用可能。
-  // 1ターン目に他の技を使った場合でも、2ターン目以降は使用不可（ロック）になる。
-  return m.id === 4 && (poke.turnsOnField || 0) > 0;
+  // であいがしらは場に出たそのターンのみ使用可能。1度でも行動すると
+  // （であいがしらを使った場合はもちろん、他の技を使った場合も）以降ロックされ、
+  // 交代して再度場に出るまで使用できなくなる（本家仕様）。
+  // 実際のロック状態は engine.js 側の executeMove/交代処理で管理している
+  // poke.deaigashiraLocked を正とする（CPU側のAI選択でも同じ値を参照している）。
+  return m.id === 4 && !!poke.deaigashiraLocked;
+}
+
+const MOVE_CATEGORY_JP = { physical: '物理', special: '特殊', status: '変化' };
+function moveDetailLineHtml(m) {
+  const power = (m.power === null || m.power === undefined) ? '-' : m.power;
+  const acc = (m.accuracy === null || m.accuracy === undefined || m.accuracy >= 999) ? '-' : m.accuracy;
+  const cat = MOVE_CATEGORY_JP[m.category] || m.category;
+  return `<span class="move-row-detail">威力:${power}　命中:${acc}　分類:${cat}</span>`;
 }
 
 function renderMoveMenu() {
@@ -945,7 +988,7 @@ function renderMoveMenu() {
   dock.classList.add('dock-wide');
   const panel = $('cmd-panel');
   panel.style.cssText = '';
-  panel.className = 'cmd-panel move-list';
+  panel.className = 'cmd-panel move-list with-side-buttons';
   const poke = state.playerActive;
   // げきりん強制中は、その技のみ選択可能（自動選択でもよいが、UIとしては強制技のみ表示）
   const gekirinForced = poke.gekirinTurns > 0 && poke.gekirinMoveId !== null
@@ -958,10 +1001,13 @@ function renderMoveMenu() {
     const disabled = m.pp <= 0 || m.locked || deaiLocked || gekirinLocked || typeLocked;
     return `
     <button class="neu-btn cmd-btn move-row ${TYPE_CLASS(m.type)}-edge" data-idx="${idx}" ${disabled ? 'disabled' : ''}>
-      ${typeIconHtml(m.type)}
-      <span class="move-row-name">${m.name}</span>
-      <span class="move-row-pp">PP ${m.pp}/${m.maxPp}</span>
-      ${(m.locked || deaiLocked || typeLocked) ? '<span style="color:#ff5d5d;font-size:10px;font-weight:900;">🔒</span>' : ''}
+      <div class="move-row-top">
+        ${typeIconHtml(m.type)}
+        <span class="move-row-name">${m.name}</span>
+        <span class="move-row-pp">PP ${m.pp}/${m.maxPp}</span>
+        ${(m.locked || deaiLocked || typeLocked) ? '<span style="color:#ff5d5d;font-size:10px;font-weight:900;">🔒</span>' : ''}
+      </div>
+      ${moveDetailLineHtml(m)}
     </button>
   `;
   }).join('');
@@ -975,8 +1021,9 @@ function renderMoveMenu() {
     });
   });
   $('act-move-back').addEventListener('click', () => renderActionMenu());
-  setWatchLogButtonsActive(true);
-  $('act-watch').onclick = () => openWatchOverlay();
+  // 技メニュー表示中は「ログを見る」「様子を見る」を非表示にする（CSS側の
+  // .cmd-dock.dock-wide .dock-log-btn / .dock-watch-btn で display:none）。
+  setWatchLogButtonsActive(false);
 }
 
 /* ---------------- Watch overlay ---------------- */
@@ -1161,6 +1208,10 @@ function renderWatchField() {
     chips.push(`バインド ${poke.bindTurns}ターン`);
   }
 
+  if (poke && poke.mustRechargeTurns > 0) {
+    chips.push(`はんどう：動けない`);
+  }
+
   if (poke && poke.utsusemiTurns > 0) {
     chips.push(`うつせみ ${poke.utsusemiTurns}ターン後に発動`);
   }
@@ -1202,13 +1253,16 @@ function renderWatchOverlay() {
 function setWatchLogButtonsActive(active) {
   const watchBtn = $('act-watch');
   const logBtn = $('act-log');
+  const surrenderBtn = $('act-surrender');
   watchBtn.disabled = !active;
   if (active) {
     watchBtn.classList.remove('hide-when-acting');
     logBtn.classList.remove('hide-when-acting');
+    if (surrenderBtn) surrenderBtn.classList.remove('hide-when-acting');
   } else {
     watchBtn.classList.add('hide-when-acting');
     logBtn.classList.add('hide-when-acting');
+    if (surrenderBtn) surrenderBtn.classList.add('hide-when-acting');
   }
 }
 
@@ -1262,6 +1316,39 @@ function closeLogOverlay() {
 }
 $('log-close').addEventListener('click', () => closeLogOverlay());
 $('act-log').addEventListener('click', () => openLogOverlay());
+
+/* ---------------- Surrender ---------------- */
+function openSurrenderOverlay() {
+  $('surrender-overlay').classList.add('show');
+}
+function closeSurrenderOverlay() {
+  $('surrender-overlay').classList.remove('show');
+}
+$('surrender-cancel').addEventListener('click', () => closeSurrenderOverlay());
+$('act-surrender').addEventListener('click', () => openSurrenderOverlay());
+$('surrender-confirm').addEventListener('click', async () => {
+  closeSurrenderOverlay();
+  // 二重発火防止：確認後は降参ボタン自体もすぐ隠す
+  $('act-surrender').disabled = true;
+  if (!state.multiplayer) {
+    // CPU戦：即座に敗北判定
+    await endBattle(false);
+    return;
+  }
+  if (Net.isHost) {
+    // ホストが降参：自分の敗北として即座に試合を終了する
+    await endMultiplayerBattleHost(false);
+  } else {
+    // ゲストが降参：ホストへ通知する。ホスト側が試合を終了させると通常の
+    // k:'end' イベントが飛んでくるので、以降の自分の敗北UI表示はそちらに任せる。
+    // まだ技選択中などでコマンドパネルが残っている場合は、ここでロックして
+    // 二重操作や宙に浮いた入力待ちを防ぐ。
+    clearCmdPanel();
+    $('cmd-dock').classList.remove('dock-wide');
+    setWatchLogButtonsActive(false);
+    await Net.sendSurrender();
+  }
+});
 
 function renderSwitchMenu() {
   openPartyOverlay('switch');
@@ -1655,31 +1742,42 @@ attachPartySwitchHandler();
 
 /* ---------------- Battle flow ---------------- */
 let turnResolve = null;
+let currentSurrenderUnsub = null; // ホスト側：ゲスト降参監視リスナーの解除関数（対戦をまたいで参照するためモジュールスコープに保持）
 
 function playerChooseMove(move) {
   const action = { type: 'move', move };
-  $('cmd-panel').innerHTML = '';
+  clearCmdPanel();
   $('cmd-dock').classList.remove('dock-wide');
   setWatchLogButtonsActive(false);
   if (turnResolve) { const r = turnResolve; turnResolve = null; r(action); }
 }
 function playerChooseSwitch(idx) {
   const action = { type: 'switch', idx };
-  $('cmd-panel').innerHTML = '';
+  clearCmdPanel();
   $('cmd-dock').classList.remove('dock-wide');
   setWatchLogButtonsActive(false);
   if (turnResolve) { const r = turnResolve; turnResolve = null; r(action); }
 }
 
 function waitForPlayerAction() {
+  const poke = state.playerActive;
+  // はかいこうせん等の反動：次のターンは行動選択自体をさせず、自動で「動けない」ターンにする。
+  // （本家同様、交代を含めどんな行動も選べない。実際に動けなくする処理は
+  //   engine.js の checkCanMove 側で行われるため、ここではダミーの技アクションを
+  //   返して runTurn 側の通常フローに乗せるだけでよい）
+  if (poke && poke.mustRechargeTurns > 0) {
+    clearCmdPanel();
+    $('cmd-dock').classList.remove('dock-wide');
+    setWatchLogButtonsActive(false);
+    return Promise.resolve({ type: 'move', move: poke.moves.find(m => m.id === poke.lastUsedMoveId) || poke.moves[0] });
+  }
   // げきりん強制中は、コマンド選択そのものを行わせず自動でその技を選択する。
   // （本家のように「げきりんしか選べない」表示にするのではなく、選択操作自体を
   //   スキップしてそのまま技が繰り出される形にする）
-  const poke = state.playerActive;
   if (poke && poke.gekirinTurns > 0 && poke.gekirinMoveId !== null) {
     const forcedMove = poke.moves.find(m => m.id === poke.gekirinMoveId);
     if (forcedMove) {
-      $('cmd-panel').innerHTML = '';
+      clearCmdPanel();
       $('cmd-dock').classList.remove('dock-wide');
       setWatchLogButtonsActive(false);
       queueMessage(`${poke.species.name}は げきりんの ちからを おさえきれない！`);
@@ -1819,6 +1917,10 @@ async function doSwitch(newActive, side) {
   newActive.gekirinMoveId = null;
   newActive.protecting = false; // 交代でまもる状態は解除
   newActive.protectStreak = 0;  // 交代でまもる連続使用カウントもリセット
+  // 本家仕様：交代するとアンコール（技固定）と混乱は解除される。
+  newActive.encoreTurns = 0;
+  newActive.encoreMoveId = null;
+  newActive.confuseTurns = 0;
   // 本家仕様：交代すると能力ランク変化は元に戻り、テラーバインド等の技封じも解除される
   newActive.ranks = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, acc: 0, eva: 0 };
   if (newActive.moves) newActive.moves.forEach((m) => { if (m) m.locked = false; });
@@ -2021,7 +2123,7 @@ async function postTurnCleanupAndRender() {
 function waitForForcedSwitch() {
   $('cmd-dock').classList.remove('dock-wide');
   setWatchLogButtonsActive(false);
-  $('cmd-panel').innerHTML = '';
+  clearCmdPanel();
   return new Promise((resolve) => {
     forcedSwitchResolve = resolve;
     openPartyOverlay('forced');
@@ -2878,14 +2980,71 @@ async function onMultiplayerPickConfirm() {
 /* =========================================================
    ホスト側バトルループ
    ========================================================= */
+// ホスト→ゲストの毎ターン終了時の完全同期ペイロードを作る。
+// これまで turnsOnField / typeLockTurns しか同期しておらず、
+// 能力ランク変化(ranks)・技のPP(moves[].pp)・特性(ability)・
+// であいがしらのロック状態(deaigashiraLocked)がゲスト画面に反映されない不具合が
+// あったため、ここでまとめて含めるようにする。
+function buildTurnEndPayload() {
+  const host = state.playerActive;
+  const guest = state.cpuActive;
+  return {
+    k: 'turn-end',
+    hostTurnsOnField: host.turnsOnField || 0,
+    guestTurnsOnField: guest.turnsOnField || 0,
+    hostTypeLockTurns: host.typeLockTurns || 0,
+    hostTypeLockType: host.typeLockType || null,
+    guestTypeLockTurns: guest.typeLockTurns || 0,
+    guestTypeLockType: guest.typeLockType || null,
+    // 能力ランク変化（かげふみ等の特性判定や、能力アップ/ダウンの表示反映に必須）
+    hostRanks: host.ranks,
+    guestRanks: guest.ranks,
+    // 特性（かげふみ・ふゆう等、対人戦のみ意味を持つ特性判定に必須）
+    hostAbility: host.ability,
+    guestAbility: guest.ability,
+    // 技のPP（配列。moves配列の並び順はチーム送信時と不変のためインデックス対応でよい）
+    hostPp: host.moves.map((m) => (m ? m.pp : 0)),
+    guestPp: guest.moves.map((m) => (m ? m.pp : 0)),
+    // であいがしらのロック状態（本家仕様：場に出たターン以外は使用不可）
+    hostDeaigashiraLocked: !!host.deaigashiraLocked,
+    guestDeaigashiraLocked: !!guest.deaigashiraLocked,
+    // げきりんの強制連続使用の状態（コマンド自動選択・混乱付与のタイミングに必須）
+    hostGekirinTurns: host.gekirinTurns || 0,
+    hostGekirinMoveId: host.gekirinMoveId || null,
+    guestGekirinTurns: guest.gekirinTurns || 0,
+    guestGekirinMoveId: guest.gekirinMoveId || null,
+    // はかいこうせん等の反動で動けない状態（対人戦でも行動選択をスキップさせるために必須）
+    hostMustRechargeTurns: host.mustRechargeTurns || 0,
+    guestMustRechargeTurns: guest.mustRechargeTurns || 0,
+    // 天候・地形（フィールド全体の状態）。ゲスト側は自前でengine.jsのbattleFieldを
+    // 更新する経路が無く、天候技（きたかぜたいよう・ゆうだち等）や天候特性を使っても
+    // ゲスト画面のbattleFieldが一切更新されない不具合があったため同期する。
+    fieldWeather: battleField.weather,
+    fieldWeatherTurns: battleField.weatherTurns,
+    fieldTerrain: battleField.terrain,
+    fieldTerrainTurns: battleField.terrainTurns,
+  };
+}
+
 async function runMultiplayerBattleHost() {
   await Net.clearEvents();
+  await Net.clearSurrenderFlags();
   state.battleBusy = true;
   clearWeatherFxLayer();
 
   resetHazards();
   resetField();
   updateFieldDisplay();
+
+  // ゲストの降参を常時監視する。ターンの行動待ちとは独立して発火するため、
+  // 相手が行動を選んでいる最中でも即座に検知して試合を終了できる。
+  // リスナー解除関数はモジュールレベル変数(currentSurrenderUnsub)にも保持し、
+  // ホスト自身が降参ボタンから終了した場合でも確実に解除できるようにする。
+  let surrenderedByOpponent = false;
+  const unsubSurrender = Net.onOpponentSurrender(() => {
+    surrenderedByOpponent = true;
+  });
+  currentSurrenderUnsub = unsubSurrender;
 
   queueMessage(`${state.cpuActive.species.name}が現れた！`);
   queueMessage(`ゆけっ！${state.playerActive.species.name}！`);
@@ -2896,21 +3055,14 @@ async function runMultiplayerBattleHost() {
   applyWeatherTerrainAbilityOnSwitchIn(state.playerActive, makeLogFn(), state.cpuActive);
   await drainMessages();
 
-  await Net.pushEvent({
-    k: 'turn-end',
-    hostTurnsOnField: state.playerActive.turnsOnField || 0,
-    guestTurnsOnField: state.cpuActive.turnsOnField || 0,
-    hostTypeLockTurns: state.playerActive.typeLockTurns || 0,
-    hostTypeLockType: state.playerActive.typeLockType || null,
-    guestTypeLockTurns: state.cpuActive.typeLockTurns || 0,
-    guestTypeLockType: state.cpuActive.typeLockType || null,
-  });
+  await Net.pushEvent(buildTurnEndPayload());
 
   state.turnNumber = 1;
 
   while (true) {
-    if (state.playerTeam.every((p) => p.fainted)) { await endMultiplayerBattleHost(false); return; }
-    if (state.cpuTeam.every((p) => p.fainted)) { await endMultiplayerBattleHost(true); return; }
+    if (surrenderedByOpponent) { if (unsubSurrender) unsubSurrender(); await endMultiplayerBattleHost(true); return; }
+    if (state.playerTeam.every((p) => p.fainted)) { if (unsubSurrender) unsubSurrender(); await endMultiplayerBattleHost(false); return; }
+    if (state.cpuTeam.every((p) => p.fainted)) { if (unsubSurrender) unsubSurrender(); await endMultiplayerBattleHost(true); return; }
 
     queueTurnDivider(state.turnNumber);
     await drainMessages();
@@ -2919,8 +3071,19 @@ async function runMultiplayerBattleHost() {
     await Net.sendAction(myAction);
 
     const guestRaw = await new Promise((resolve) => {
-      Net.waitForOpponentAction(resolve);
+      if (surrenderedByOpponent) { resolve('__surrender__'); return; }
+      let settled = false;
+      const finish = (v) => { if (settled) return; settled = true; clearInterval(check); resolve(v); };
+      Net.waitForOpponentAction(finish);
+      const check = setInterval(() => {
+        if (surrenderedByOpponent) finish('__surrender__');
+      }, 200);
     });
+    if (guestRaw === '__surrender__') {
+      if (unsubSurrender) unsubSurrender();
+      await endMultiplayerBattleHost(true);
+      return;
+    }
     const guestAction = resolveRemoteAction(guestRaw, state.cpuActive);
 
     msgQueue = [];
@@ -2957,15 +3120,7 @@ async function runMultiplayerBattleHost() {
     await postTurnCleanupMultiplayerHost();
     state.turnNumber++;
 
-    await Net.pushEvent({
-      k: 'turn-end',
-      hostTurnsOnField: state.playerActive.turnsOnField || 0,
-      guestTurnsOnField: state.cpuActive.turnsOnField || 0,
-      hostTypeLockTurns: state.playerActive.typeLockTurns || 0,
-      hostTypeLockType: state.playerActive.typeLockType || null,
-      guestTypeLockTurns: state.cpuActive.typeLockTurns || 0,
-      guestTypeLockType: state.cpuActive.typeLockType || null,
-    });
+    await Net.pushEvent(buildTurnEndPayload());
   }
 }
 
@@ -3044,6 +3199,8 @@ async function postTurnCleanupMultiplayerHost() {
 async function endMultiplayerBattleHost(hostWon) {
   state.battleBusy = false;
   BattleBgm.stop();
+  if (currentSurrenderUnsub) { currentSurrenderUnsub(); currentSurrenderUnsub = null; }
+  await Net.clearSurrenderFlags();
   const overlay = $('result-overlay');
   $('result-title').textContent = hostWon ? 'WIN' : 'LOSE';
   $('result-title').className = 'result-title ' + (hostWon ? 'win' : 'lose');
@@ -3254,6 +3411,9 @@ async function handleGuestEvent(ev) {
       poke.gekirinMoveId = null;
       poke.protecting = false;
       poke.protectStreak = 0;
+      // 本家仕様：交代するとアンコール（技固定）は解除される。
+      poke.encoreTurns = 0;
+      poke.encoreMoveId = null;
     }
     if (uiSide === 'self') state.playerActive = poke; else state.cpuActive = poke;
     setSprite(poke, uiSide);
@@ -3290,6 +3450,74 @@ async function handleGuestEvent(ev) {
       state.cpuActive.typeLockTurns = ev.hostTypeLockTurns;
       state.cpuActive.typeLockType = ev.hostTypeLockType || null;
     }
+    // 能力ランク変化（かくとうの威嚇など）をゲスト画面の自分/相手に反映する。
+    // これが無いと、こうげき/とくこう等が変化してもゲスト側の表示・実データが
+    // 一切変わらず見えてしまう不具合があった。
+    if (state.playerActive && ev.guestRanks) {
+      state.playerActive.ranks = ev.guestRanks;
+    }
+    if (state.cpuActive && ev.hostRanks) {
+      state.cpuActive.ranks = ev.hostRanks;
+    }
+    // 特性（かげふみ等の対人限定特性判定に必須）。
+    // 通常はチーム送信時に一度受け取っているはずだが、念のため毎ターン確実に揃える。
+    if (state.playerActive && ev.guestAbility !== undefined) {
+      state.playerActive.ability = ev.guestAbility;
+    }
+    if (state.cpuActive && ev.hostAbility !== undefined) {
+      state.cpuActive.ability = ev.hostAbility;
+    }
+    // 技のPPをゲスト画面の自分/相手のmoves配列に反映する。
+    // 配列の並び順はチーム送信（sendTeam）時のmids順とホスト側のmoves順で一致しているため、
+    // インデックス対応でそのまま書き込める。
+    if (state.playerActive && Array.isArray(ev.guestPp) && state.playerActive.moves) {
+      state.playerActive.moves.forEach((m, i) => {
+        if (m && ev.guestPp[i] !== undefined) m.pp = ev.guestPp[i];
+      });
+    }
+    if (state.cpuActive && Array.isArray(ev.hostPp) && state.cpuActive.moves) {
+      state.cpuActive.moves.forEach((m, i) => {
+        if (m && ev.hostPp[i] !== undefined) m.pp = ev.hostPp[i];
+      });
+    }
+    // であいがしらのロック状態（本家仕様：場に出たターン以外は使用不可）を同期する。
+    if (state.playerActive && ev.guestDeaigashiraLocked !== undefined) {
+      state.playerActive.deaigashiraLocked = ev.guestDeaigashiraLocked;
+    }
+    if (state.cpuActive && ev.hostDeaigashiraLocked !== undefined) {
+      state.cpuActive.deaigashiraLocked = ev.hostDeaigashiraLocked;
+    }
+    // げきりんの強制連続使用状態を同期する（自分側のコマンド自動選択判定に必須）。
+    if (state.playerActive && ev.guestGekirinTurns !== undefined) {
+      state.playerActive.gekirinTurns = ev.guestGekirinTurns;
+      state.playerActive.gekirinMoveId = ev.guestGekirinMoveId || null;
+    }
+    if (state.cpuActive && ev.hostGekirinTurns !== undefined) {
+      state.cpuActive.gekirinTurns = ev.hostGekirinTurns;
+      state.cpuActive.gekirinMoveId = ev.hostGekirinMoveId || null;
+    }
+    // はかいこうせん等の反動で動けない状態を同期する（自分側のコマンド自動選択判定に必須）。
+    if (state.playerActive && ev.guestMustRechargeTurns !== undefined) {
+      state.playerActive.mustRechargeTurns = ev.guestMustRechargeTurns;
+    }
+    if (state.cpuActive && ev.hostMustRechargeTurns !== undefined) {
+      state.cpuActive.mustRechargeTurns = ev.hostMustRechargeTurns;
+    }
+    // 天候・地形（フィールド全体の状態）をホストのbattleFieldからゲストのbattleFieldへ同期する。
+    // これが無いと、天候技（きたかぜたいよう・ゆうだち等）や天候特性を使ってもゲスト画面の
+    // battleFieldが一切更新されず、天候表示（chip）や継続メッセージが不正確になる。
+    if (ev.fieldWeather !== undefined) {
+      battleField.weather = ev.fieldWeather;
+      battleField.weatherTurns = ev.fieldWeatherTurns || 0;
+    }
+    if (ev.fieldTerrain !== undefined) {
+      battleField.terrain = ev.fieldTerrain;
+      battleField.terrainTurns = ev.fieldTerrainTurns || 0;
+    }
+    updateFieldDisplay();
+    // ランク変化・PP反映後、画面のHUD（能力ランク表示等があれば）を最新化しておく。
+    if (state.playerActive) updateHud(state.playerActive, 'self');
+    if (state.cpuActive) updateHud(state.cpuActive, 'opp');
     if (guestTurnEndResolve) {
       const r = guestTurnEndResolve;
       guestTurnEndResolve = null;
@@ -3330,7 +3558,7 @@ async function playGuestMessages() {
 function waitGuestForcedSwitch() {
   $('cmd-dock').classList.remove('dock-wide');
   setWatchLogButtonsActive(false);
-  $('cmd-panel').innerHTML = '';
+  clearCmdPanel();
   return new Promise((resolve) => {
     forcedSwitchResolve = (idx) => {
       forcedSwitchResolve = null;

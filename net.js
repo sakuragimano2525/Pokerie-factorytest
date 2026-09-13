@@ -291,11 +291,42 @@ const Net = {
     this._unsubs.push(() => ref.off('child_added', handler));
   },
 
+  /* ---- 降参：双方向・常時リッスン可能な専用パス ----
+     ターンの行動待ち（waitForOpponentAction）はお互いの通常行動が
+     揃うまで発火しないため、降参のような「今すぐ試合を終わらせたい」
+     意思表示には使えない。専用のパスを設けて常時購読することで、
+     相手が自分の行動選択中でも即座に降参を検知できるようにする。 */
+  async sendSurrender() {
+    if (!this.roomRef) return;
+    const path = this.isHost ? 'battle/hostSurrender' : 'battle/guestSurrender';
+    await this.roomRef.child(path).set(true);
+  },
+
+  onOpponentSurrender(cb) {
+    if (!this.roomRef) return;
+    const path = this.isHost ? 'battle/guestSurrender' : 'battle/hostSurrender';
+    const ref = this.roomRef.child(path);
+    const handler = (snap) => {
+      if (snap.val()) cb();
+    };
+    ref.on('value', handler);
+    this._unsubs.push(() => ref.off('value', handler));
+    return () => ref.off('value', handler);
+  },
+
+  async clearSurrenderFlags() {
+    if (!this.roomRef) return;
+    await this.roomRef.child('battle/hostSurrender').remove();
+    await this.roomRef.child('battle/guestSurrender').remove();
+  },
+
   async clearEvents() {
     if (!this.roomRef) return;
     await this.roomRef.child('battle/events').remove();
     await this.roomRef.child('battle/hostAction').remove();
     await this.roomRef.child('battle/guestAction').remove();
+    await this.roomRef.child('battle/hostSurrender').remove();
+    await this.roomRef.child('battle/guestSurrender').remove();
   },
 
   /* ---- 対戦終了後の連戦/退出選択 ---- */

@@ -483,16 +483,6 @@ html,body{
   background-position: center center;
   background-repeat: no-repeat;
 }
-.poke-platform{
-  position:absolute;
-  width: 150px; height: 38px;
-  border-radius:50%;
-  background: rgba(120,128,150,0.35);
-  filter: blur(1px);
-  box-shadow: 0 0 0 6px rgba(255,255,255,0.15) inset;
-}
-.plat-opp{ top: 30%; right: 16%; transform: translate(50%,-50%) scale(0.9); }
-.plat-self{ top: 84%; left: 16%; transform: translate(-50%,-50%) scale(1.55); }
 
 /* ================= 天候エフェクト（背景演出） ================= */
 .weather-fx-layer{
@@ -926,6 +916,72 @@ html,body{
   align-self:center; color: var(--muted); font-size: 12.5px; padding: 20px;
 }
 
+.dock-surrender-btn{
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight:800;
+  padding: 9px 14px;
+  align-self: flex-end;
+  box-shadow: var(--shadow-light-sm);
+  color: #d6404a;
+}
+.dock-surrender-btn.hide-when-acting{ display:none; }
+
+.surrender-overlay{
+  position:absolute; inset:0; z-index:35;
+  background: rgba(20,22,30,0.6);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; pointer-events:none;
+  transition: opacity .2s ease;
+}
+.surrender-overlay.show{ opacity:1; pointer-events:auto; }
+.surrender-panel{
+  width: min(88%, 340px);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  padding: 22px 20px;
+  display:flex; flex-direction:column; gap: 14px;
+  text-align:center;
+}
+.surrender-panel-title{
+  font-size: 16px;
+  font-weight: 900;
+}
+.surrender-panel-desc{
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.surrender-panel-btns{
+  display:flex; gap: 10px;
+  margin-top: 4px;
+}
+.surrender-panel-btns button{
+  flex: 1;
+  border-radius: 999px;
+  padding: 12px 8px;
+  font-size: 13.5px;
+  font-weight: 800;
+}
+.surrender-confirm-btn{
+  color: #fff;
+  background: linear-gradient(135deg, #e0555f, #c73a44);
+  box-shadow: 1px 1px 3px rgba(0,0,0,0.18);
+}
+
+/* たたかう選択中（技メニュー表示中）は降参ボタン・ログを見る・様子を見るをすべて隠し、
+   技4つ＋もどるボタンだけを縦一列で表示する。 */
+.cmd-dock.dock-wide .dock-surrender-btn{ display:none; }
+.cmd-dock.dock-wide .dock-log-btn,
+.cmd-dock.dock-wide .dock-watch-btn{
+  display:none;
+}
+.move-list.with-side-buttons{
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(4, 1fr) 0.6fr;
+}
+
 .watch-side-list{
   flex: 0 0 30%;
   display:flex; flex-direction:column; gap:8px;
@@ -1038,7 +1094,7 @@ html,body{
   display:flex; flex-direction:column; gap: 8px;
   transition: width .18s ease;
 }
-.cmd-dock.dock-wide{ width: 320px; }
+.cmd-dock.dock-wide{ width: 380px; }
 .dock-watch-btn{
   border-radius: 999px;
   font-size: 12.5px;
@@ -1061,7 +1117,7 @@ html,body{
 
 .cmd-panel{
   display:grid;
-  gap: 10px;
+  gap: 6px;
   min-height:0;
 }
 
@@ -1089,28 +1145,48 @@ html,body{
 
 .move-list{
   grid-template-columns: 1fr;
-  grid-template-rows: repeat(4, 1fr) 0.6fr;
-  width: 320px;
+  grid-template-rows: repeat(4, 1fr) 0.5fr;
+  width: 380px;
+  gap: 6px;
 }
 .move-row{
-  flex-direction: row !important;
-  align-items:center;
-  justify-content: flex-start !important;
-  gap: 12px;
-  padding: 0 18px 0 16px;
+  flex-direction: column !important;
+  align-items: stretch;
+  justify-content: center !important;
+  gap: 2px;
+  padding: 5px 16px 5px 14px;
   text-align: left;
-  font-size: 17px;
+  font-size: 15px;
   border-left: 8px solid transparent;
+}
+.move-row-top{
+  display:flex;
+  flex-direction: row;
+  align-items:center;
+  gap: 10px;
+  width: 100%;
 }
 .move-row-type-icon{
   flex: none;
-  width: 26px; height: 26px;
+  width: 22px; height: 22px;
   object-fit: contain;
 }
 .move-row-name{ flex:1; text-align:left; }
-.move-row-pp{ flex:none; font-size:12px; font-weight:700; color:var(--ink-soft); }
+.move-row-pp{ flex:none; font-size:11px; font-weight:700; color:var(--ink-soft); }
+.move-row-detail{
+  display:block;
+  width:100%;
+  text-align:left;
+  font-size: 10px;
+  font-weight:700;
+  color: var(--ink-soft);
+  padding-left: 32px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .move-row-back{
-  font-size: 14px;
+  font-size: 13px;
   font-weight:800;
   color: var(--ink-soft);
 }
@@ -1535,8 +1611,11 @@ html,body{
   .msg-toast{ font-size:12.5px; padding:8px 14px; }
   .cmd-btn{ font-size:13px; padding:12px 8px; }
   .cmd-dock{ width:180px; }
-  .move-list{ width:250px; }
-  .move-row{ font-size:14px; }
+  .cmd-dock.dock-wide{ width:280px; }
+  .move-list{ width:280px; gap:4px; }
+  .move-row{ font-size:12.5px; padding:3px 12px 3px 10px; }
+  .move-row-detail{ font-size:8.5px; padding-left:28px; }
+  .cmd-panel{ gap:4px; }
   .multi-menu-btn{ width: 180px; height: 150px; }
   .multi-menu-btn .mmb-icon{ font-size: 34px; }
   .host-room-id{ font-size: 44px; padding: 8px 20px 8px 28px; }
@@ -1694,8 +1773,6 @@ html,body{
   <div id="screen-battle" class="screen">
     <div class="battle-field" id="battle-field">
       <div class="battle-field-bg" id="battle-field-bg"></div>
-      <div class="poke-platform plat-opp"></div>
-      <div class="poke-platform plat-self"></div>
       <div class="weather-fx-layer" id="weather-fx-layer"></div>
       <div class="special-fx-layer" id="special-fx-layer"></div>
 
@@ -1765,8 +1842,20 @@ html,body{
         <button class="neu-btn party-close-btn watch-close-btn" id="log-close">もどる</button>
       </div>
 
+      <div class="surrender-overlay" id="surrender-overlay">
+        <div class="surrender-panel">
+          <div class="surrender-panel-title">こうさんしますか？</div>
+          <div class="surrender-panel-desc">こうさんすると、この試合はまけになります。</div>
+          <div class="surrender-panel-btns">
+            <button class="neu-btn surrender-cancel-btn" id="surrender-cancel">やめる</button>
+            <button class="neu-btn surrender-confirm-btn" id="surrender-confirm">こうさんする</button>
+          </div>
+        </div>
+      </div>
+
       <div class="battle-bottom">
         <div class="cmd-dock" id="cmd-dock">
+          <button class="neu-btn dock-surrender-btn hide-when-acting" id="act-surrender">降参する</button>
           <button class="neu-btn dock-log-btn hide-when-acting" id="act-log">ログを見る</button>
           <button class="neu-btn dock-watch-btn hide-when-acting" id="act-watch" disabled>様子を見る</button>
           <div class="cmd-panel" id="cmd-panel"></div>

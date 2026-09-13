@@ -206,6 +206,7 @@ function createRandomPokemon(speciesId, level = 100) {
     deaigashiraLocked: false, // であいがしら：登場ターン以外はロック（交代で解除）
     gekirinTurns: 0,        // げきりん：強制連続使用の残りターン数
     gekirinMoveId: null,    // げきりん：強制されている技ID
+    mustRechargeTurns: 0,   // はかいこうせん等：反動で次のターン動けない残りターン数
   };
 }
 
@@ -217,17 +218,45 @@ function drawRandomTeam(count = 3) {
 }
 
 // ---- タイプ相性 ----
-function getTypeEffectiveness(atkType, defType1, defType2) {
-  const chart = GAME_DATA.typeChart[atkType];
+// 特定の技だけ、通常のタイプ相性とは異なる特殊な相性を持つ場合の対応表。
+// TYPE_EFFECTIVENESS_OVERRIDE_MOVES[moveId] = { invertOf: 'grass' } または { forced: {タイプ: 倍率} }
+//   弓張月(200)・アネモネルージュ(434)：くさタイプとの相性を反転させる特別な技。
+//     例：ほのお（本来くさに1/2＝いまひとつ）→ 2倍（効果抜群）、
+//         みず（本来くさに2倍＝効果抜群）→ 1/2倍（いまひとつ）
+//   アルカナフール(300)：エスパータイプ技だが、本来無効のはずのあくタイプに対して
+//     無効ではなく効果抜群(2倍)になる特別な効果を持つ。
+const TYPE_EFFECTIVENESS_OVERRIDE_MOVES = {
+  200: { invertOf: 'grass' }, // 弓張月
+  434: { invertOf: 'grass' }, // アネモネルージュ
+  300: { forced: { dark: 2 } }, // アルカナフール
+};
+
+function getTypeEffectiveness(atkType, defType1, defType2, moveId) {
+  const override = moveId != null ? TYPE_EFFECTIVENESS_OVERRIDE_MOVES[moveId] : null;
+  const types = [];
+  if (defType1) types.push(defType1);
+  if (defType2) types.push(defType2);
+
   let mult = 1;
-  if (chart) {
-    // タイプ消失・変化を反映
-    const types = [];
-    if (defType1) types.push(defType1);
-    if (defType2) types.push(defType2);
+
+  if (override && override.invertOf) {
+    // 「本来のくさタイプとしての相性表」を参照し、その倍率を反転させる
+    const baseChart = GAME_DATA.typeChart[override.invertOf];
     for (const t of types) {
-      if (chart[t] !== undefined) mult *= chart[t];
+      const baseMult = (baseChart && baseChart[t] !== undefined) ? baseChart[t] : 1;
+      const inverted = baseMult === 0 ? 1 : (1 / baseMult);
+      mult *= inverted;
     }
+    return mult;
+  }
+
+  const chart = GAME_DATA.typeChart[atkType];
+  for (const t of types) {
+    let m = (chart && chart[t] !== undefined) ? chart[t] : 1;
+    if (override && override.forced && override.forced[t] !== undefined) {
+      m = override.forced[t];
+    }
+    mult *= m;
   }
   return mult;
 }
@@ -476,7 +505,9 @@ function consumeEnergyStacks(poke, logFn) {
 }
 
 // ---- ランク変化適用 ----
-function applyRankChange(target, rankData, logFn, attackerAbility) {
+// opponent: このランク変化を「見ている」targetの対戦相手（びんじょう判定用）。
+// 省略された場合はびんじょうの発動チェックを行わない。
+function applyRankChange(target, rankData, logFn, attackerAbility, opponent) {
   if (!rankData) return;
   const chance = rankData[0] ?? 100;
   if (rand(1, 100) > chance) return;
@@ -525,11 +556,16 @@ function applyRankChange(target, rankData, logFn, attackerAbility) {
       else changePhrase = 'ガクッと下がった！';
       pushGroup(changePhrase, statName[k]);
 
-      if (delta > 0 && target.ability === ABILITY.BINJOU && attackerAbility !== target.ability) {
+      // びんじょう：相手（target）のランクが上がったとき、びんじょうを持つ
+      // 自分（opponent）が、上がったのと同じ項目・同じ段階だけランクが上がる。
+      // 「上がったポケモン自身が全ステータス上昇する」という誤った効果になっていたため修正。
+      // target自身はびんじょうの対象外（自分の上昇に自分で反応しない）。発動者が瀕死なら発動しない。
+      if (delta > 0 && opponent && opponent !== target && !opponent.fainted && opponent.ability === ABILITY.BINJOU) {
         flushGroups();
-        const traceDelta = [100, delta, delta, delta, delta, delta, delta, delta];
-        applyRankChange(target, traceDelta, logFn, target.ability);
-        logFn(`${target.species.name}のびんじょうが発動！`);
+        const binjouDelta = keys.map((kk) => (kk === k ? actualDelta : 0));
+        const binjouData = [100, ...binjouDelta];
+        applyRankChange(opponent, binjouData, logFn, opponent.ability);
+        logFn(`${opponent.species.name}のびんじょうが発動！`);
       }
 
       if (delta < 0) {
@@ -808,14 +844,8 @@ function calcDamage(attacker, defender, move, logFn) {
   const base = Math.floor(Math.floor((2 * level / 5 + 2) * move.power * effAtk / effDef) / 50) + 2;
   const atkTypes = [attacker.species.type1, attacker.species.type2].filter(Boolean);
   const stab = atkTypes.includes(move.type) ? 1.3 : 1.0;
-  // 実効タイプを使用してタイプ相性計算
-  let typeMult = 1;
-  const chart = GAME_DATA.typeChart[move.type];
-  if (chart) {
-    for (const t of defTypes) {
-      if (chart[t] !== undefined) typeMult *= chart[t];
-    }
-  }
+  // 実効タイプを使用してタイプ相性計算（弓張月・アネモネルージュ・アルカナフール等の特殊相性技を考慮）
+  const typeMult = getTypeEffectiveness(move.type, defTypes[0], defTypes[1], move.id);
   const dmgTypeMult = typeMult === 2 ? 1.6 : typeMult === 4 ? 2.56 : typeMult;
   const randomFactor = rand(85, 100) / 100;
   let critMult = isCrit ? 1.5 : 1.0;
@@ -966,6 +996,13 @@ function checkAccuracy(attacker, defender, move) {
 // ---- 状態異常によるターン開始時の行動不能判定 ----
 function checkCanMove(poke, logFn) {
   if (poke.ability === ABILITY.SEISHINRYOKU) poke.flinch = false;
+
+  // ---- はかいこうせん等の反動：次のターンは動けない ----
+  if (poke.mustRechargeTurns > 0) {
+    poke.mustRechargeTurns--;
+    logFn(`${poke.species.name}は反動で動けない！`);
+    return false;
+  }
 
   if (poke.flinch) {
     logFn(`${poke.species.name}はひるんで動けなかった！`);
@@ -1223,7 +1260,9 @@ function applyDamageTakenEffects(poke, logFn) {
 // ---- ムラっけ ----
 function applyMurakke(poke, logFn) {
   if (!poke || poke.fainted || poke.ability !== ABILITY.MURAKKE) return;
-  const keys = ['atk', 'def', 'spa', 'spd', 'spe', 'acc', 'eva'];
+  // 本家の現行仕様：ムラっけが上げ下げする対象は「こうげき・ぼうぎょ・とくこう・とくぼう・すばやさ」の
+  // 5項目のみで、命中率(acc)・回避率(eva)は対象に含まれない。
+  const keys = ['atk', 'def', 'spa', 'spd', 'spe'];
   const shuffled = [...keys].sort(() => Math.random() - 0.5);
   const upKey = shuffled[0];
   const downKey = shuffled[1];
@@ -1303,12 +1342,13 @@ function executeMultiHit(attacker, defender, move, logFn) {
 
     let accuracySuccess = true;
     if (!isSkillLink) {
+      // 連続技の命中判定を checkAccuracy と同じ計算式に統一する。
+      // 従来は素の命中率とだけ比較する独自ロジックで、ノーガードは元より
+      // 命中ランク・回避ランク・ふくがん等の補正も一切反映されないバグがあった。
+      // トリプルアクセルのみ命中率90固定という特殊仕様があるため、一時的な
+      // move オブジェクトで accuracy を差し替えてから checkAccuracy に渡す。
       const acc = (move.id === 229) ? 90 : move.accuracy;
-      if (acc !== undefined && acc !== null && acc < 999) {
-        if (rand(1, 100) > acc) {
-          accuracySuccess = false;
-        }
-      }
+      accuracySuccess = checkAccuracy(attacker, defender, { ...move, accuracy: acc });
     }
     if (!accuracySuccess) {
       logFn(`${attacker.species.name}の${move.name}は${defender.species.name}に外れた！`);
@@ -1388,8 +1428,8 @@ function executeMultiHit(attacker, defender, move, logFn) {
   if (anyHit && !attacker.fainted) {
     const suppressSecondary = attacker.ability === ABILITY.CHIKARAZUKU;
     if (!suppressSecondary) {
-      if (!defender.fainted) applyRankChange(defender, move.oppRank, logFn);
-      applyRankChange(attacker, move.selfRank, logFn);
+      if (!defender.fainted) applyRankChange(defender, move.oppRank, logFn, null, attacker);
+      applyRankChange(attacker, move.selfRank, logFn, null, defender);
     }
   }
 
@@ -1539,16 +1579,16 @@ function executeMove(attacker, defender, move, logFn) {
   move.pp--;
   logFn(`${attacker.species.name}の${move.name}！`, { moveUse: attacker.side });
 
+  // ---- であいがしら：場に出たそのターンに何か技を使ったら、以降ロック ----
+  // 本家仕様では、であいがしら自身を選んだ場合はもちろん、他の技を選んだ場合でも
+  // 「そのターンに行動した」時点でロックがかかり、次に交代して場に出直すまで使えない。
+  attacker.deaigashiraLocked = true;
+
   if (move.callRandomMove) {
     const randomMove = pickRandomMove();
     logFn(`${randomMove.name}が飛び出した！`);
     executeMove(attacker, defender, randomMove, logFn);
     return;
-  }
-
-  // ---- であいがしら：使用したら次のターンからロック（交代で解除） ----
-  if (move.id === 4) {
-    attacker.deaigashiraLocked = true;
   }
 
   // ---- げきりん：強制連続使用の管理 ----
@@ -1761,6 +1801,11 @@ function executeMove(attacker, defender, move, logFn) {
     modifiedPower = 150;
     logFn(`${move.name}の威力は${modifiedPower}になった！`);
   }
+  // 有刺鉄線：相手が状態異常の時、威力2倍
+  if (move.id === 500 && hasMajorStatus(defender)) {
+    modifiedPower = move.power * 2;
+    logFn(`${move.name}の威力は${modifiedPower}になった！`);
+  }
   if (move.id === 70 && battleField.terrain === 'electric') {
     modifiedPower = 120;
     logFn(`${move.name}の威力は${modifiedPower}になった！`);
@@ -1936,8 +1981,8 @@ function executeMove(attacker, defender, move, logFn) {
       return;
     }
 
-    if (!suppressSecondary) applyRankChange(attacker, move.selfRank, logFn);
-    if (!suppressSecondary) applyRankChange(defender, move.oppRank, logFn);
+    if (!suppressSecondary) applyRankChange(attacker, move.selfRank, logFn, null, defender);
+    if (!suppressSecondary) applyRankChange(defender, move.oppRank, logFn, null, attacker);
     if (!suppressSecondary) applyStatus(attacker, move.selfStatus, logFn);
     if (!suppressSecondary) applyStatus(defender, move.oppStatus, logFn, attacker.ability);
     // 技を使った本人（attacker）のlastUsedMoveIdを記録（アンコール・ひややかパンチ用）
@@ -2007,6 +2052,12 @@ function executeMove(attacker, defender, move, logFn) {
   if (typeMult > 1) logFn('効果は抜群だ！');
   else if (typeMult < 1) logFn('効果は今ひとつのようだ…');
   if (survivedByGanjou) logFn(`${defender.species.name}はがんじょうで持ちこたえた！`);
+
+  // ---- はかいこうせん：命中して技が成立した場合、相手を倒したかどうかに関わらず
+  // 次のターンは反動で動けなくなる（本家仕様）。 ----
+  if (move.id === 253) {
+    attacker.mustRechargeTurns = 1;
+  }
 
   // きずつけボディ
   if (defender.ability === ABILITY.KIZUTSUKEBODY && move.category === 'physical' && !attacker.fainted) {
@@ -2084,7 +2135,13 @@ function executeMove(attacker, defender, move, logFn) {
     logFn(`${defender.species.name}は倒れた！`, { faint: defender.side });
     // 相手を倒した場合でも、技自体は命中しているため自分のランク変化（selfRank）は発動する。
     if (!attacker.fainted && !suppressSecondary) {
-      applyRankChange(attacker, move.selfRank, logFn);
+      applyRankChange(attacker, move.selfRank, logFn, null, defender);
+    }
+    if (move.id === 136) {
+      setWeather('sun', 5, logFn);
+    }
+    if (move.id === 358) {
+      setWeather('rain', 5, logFn);
     }
     if (defender.ability === ABILITY.YUUBABU && !attacker.fainted) {
       if (!battleField.chemicalGasActive || defender.ability === ABILITY.KAGAKUHENKAGASU) {
@@ -2102,9 +2159,24 @@ function executeMove(attacker, defender, move, logFn) {
       let flinchChance = move.flinchChance || 0;
       if (attacker.ability === ABILITY.TEN_NO_MEGUMI) flinchChance = Math.min(100, flinchChance * 2);
       if (flinchChance && rand(1, 100) <= flinchChance) defender.flinch = true;
-      applyRankChange(defender, move.oppRank, logFn);
-      applyRankChange(attacker, move.selfRank, logFn);
+      applyRankChange(defender, move.oppRank, logFn, null, attacker);
+      applyRankChange(attacker, move.selfRank, logFn, null, defender);
       applyStatus(defender, move.oppStatus, logFn, attacker.ability);
+      // 攻撃技命中後に自分が状態異常になる技（朧一閃・ねたみのいかり・カースブラスト等）
+      // げきりん(43)は専用の連続技処理で混乱を扱うためここでは除外
+      if (move.id !== 43) applyStatus(attacker, move.selfStatus, logFn);
+      // 有刺鉄線：場に何かのフィールドが張られている時、相手を確定でもうどく状態にする
+      if (move.id === 500 && battleField.terrain && battleField.terrain !== 'none' && !defender.fainted) {
+        applyStatus(defender, [100, STATUS.BADLY_POISON], logFn, attacker.ability);
+      }
+      // きたかぜたいよう：命中すると天候がひでり（sun）になる（5ターン）
+      if (move.id === 136) {
+        setWeather('sun', 5, logFn);
+      }
+      // ゆうだち：命中すると天候があめ（rain）になる（5ターン）
+      if (move.id === 358) {
+        setWeather('rain', 5, logFn);
+      }
     }
     if (move.category === 'physical' && !defender.fainted) {
       if (defender.ability === ABILITY.SEIDENKI && attacker.status === STATUS.NONE && rand(1, 100) <= 30) {
@@ -2344,6 +2416,13 @@ function weatherTerrainScoreMult(moveType, moveId) {
 }
 
 function chooseCpuAction(cpuPoke, playerPoke) {
+  // はかいこうせん等の反動：次のターンは強制的に動けないので、技選択自体を行わない。
+  // （実際に行動を封じる処理は checkCanMove 側で行われるため、ここではダミーの
+  //   アクションを返すだけでよい）
+  if (cpuPoke.mustRechargeTurns > 0) {
+    return { type: 'move', move: cpuPoke.moves.find(m => m.id === cpuPoke.lastUsedMoveId) || cpuPoke.moves[0] };
+  }
+
   const usable = cpuPoke.moves.filter((m) => m.pp > 0 && !m.locked && !(m.id === 4 && cpuPoke.deaigashiraLocked));
   if (usable.length === 0) return { type: 'move', move: cpuPoke.moves.find(m => m.pp > 0) || cpuPoke.moves[0] };
 
@@ -2549,7 +2628,7 @@ function chooseTrainerAttack(attacker, defender, usableMoves) {
     // 特性によるタイプ無効化（ちくでん/ちょすい/もらいび/むしよけ/そうしょく/ふゆう）：
     // 無効化される攻撃技は選ばれにくくする（ダメージ技として全く機能しないため）
     if (isDamagingMoveAI(move) && isAbilityTypeImmuneAI(effType, defender.ability)) blocked = true;
-    const mult = getTypeEffectiveness(effType, defTypes[0], defTypes[1]);
+    const mult = getTypeEffectiveness(effType, defTypes[0], defTypes[1], move.id);
     if (mult === 0) blocked = true;
 
     // マジックミラー：相手がこの特性を持つ場合、自分に向けた変化技は跳ね返されて自分が不利益を受けるため使わない
@@ -2635,7 +2714,7 @@ function chooseTrainerAttack(attacker, defender, usableMoves) {
         if (other.id === 479) return true;
         if (!isDamagingMoveAI(other)) return true;
         const otherEffType = resolveEffectiveMoveType(other, battleField);
-        const otherMult = getTypeEffectiveness(otherEffType, defTypes[0], defTypes[1]);
+        const otherMult = getTypeEffectiveness(otherEffType, defTypes[0], defTypes[1], other.id);
         return otherMult < 1;
       });
       if (noEffectiveHit) { score += 3; }
@@ -2658,7 +2737,7 @@ function chooseTrainerAttack(attacker, defender, usableMoves) {
       for (const other of usableMoves) {
         if (other.id === move.id) continue;
         if (!isDamagingMoveAI(other)) continue;
-        const otherMult = getTypeEffectiveness(other.type, defTypes[0], defTypes[1]);
+        const otherMult = getTypeEffectiveness(other.type, defTypes[0], defTypes[1], other.id);
         if (otherMult === 0) continue;
         const otherIsSpecial = other.category === 'special';
         if (otherIsSpecial && spAtkDelta === 0) continue;
@@ -2687,7 +2766,7 @@ function chooseTrainerAttack(attacker, defender, usableMoves) {
     usableMoves.every((m) => {
       if (!isDamagingMoveAI(m)) return true;
       const effType = resolveEffectiveMoveType(m, battleField);
-      const mult = getTypeEffectiveness(effType, defTypes[0], defTypes[1]);
+      const mult = getTypeEffectiveness(effType, defTypes[0], defTypes[1], m.id);
       return mult < 1;
     });
   if (allDamagingIneffective) {
