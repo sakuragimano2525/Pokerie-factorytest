@@ -110,7 +110,15 @@ function chooseMoves(species) {
     chosen.push(p);
   }
   while (chosen.length < 4) chosen.push(0);
-  return chosen;
+
+  // 表示上、変化技は後ろの枠に寄せる（見やすさのため）。
+  // 1つなら4番目、2つなら3番目と4番目に配置する。攻撃技同士・変化技同士の
+  // 内部順序（採用順）は変えず、カテゴリの並び替えのみ行う。
+  const damageOnly = chosen.filter((id) => id !== 0 && GAME_DATA.moves[id]?.category !== 'status');
+  const statusOnly = chosen.filter((id) => id !== 0 && GAME_DATA.moves[id]?.category === 'status');
+  const reordered = [...damageOnly, ...statusOnly];
+  while (reordered.length < 4) reordered.push(0);
+  return reordered;
 }
 
 function rollAbility(species) {
@@ -804,7 +812,10 @@ function calcDamage(attacker, defender, move, logFn) {
   }
 
   if (attacker.ability === ABILITY.CHIKARAMOCHI && isPhysical && move.damageFormula !== 'oppAtkVsOppDef') {
-    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) atkStat *= 2;
+    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) {
+      atkStat *= 2;
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！攻撃が2倍になった！`);
+    }
   }
 
   let critChance = 1 / 16;
@@ -821,24 +832,39 @@ function calcDamage(attacker, defender, move, logFn) {
   if (battleField.weather === 'sand' && isDefSpd && defTypes.includes('rock')) effDef *= 1.5;
   if (battleField.weather === 'snow' && isDefDef && defTypes.includes('ice')) effDef *= 1.5;
   if (attacker.ability === ABILITY.KONJOU && attacker.status === STATUS.BURN && isAtkStat) {
-    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) effAtk *= 1.5;
+    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) {
+      effAtk *= 1.5;
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！攻撃が1.5倍になった！`);
+    }
   }
   if (attacker.ability === ABILITY.SUN_POWER && battleField.weather === 'sun' && isSpaStat) {
-    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) effAtk *= 1.5;
+    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) {
+      effAtk *= 1.5;
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！特攻が1.5倍になった！`);
+    }
   }
   if (attacker.ability === ABILITY.ICE_BREAK && battleField.weather === 'snow' && (isAtkStat || isSpaStat)) {
-    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) effAtk *= 1.5;
+    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) {
+      effAtk *= 1.5;
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！${isAtkStat ? '攻撃' : '特攻'}が1.5倍になった！`);
+    }
   }
   if (defender.ability === ABILITY.FUSHIGINA_UROKO && hasMajorStatus(defender) && isDefDef) {
     if (!battleField.chemicalGasActive || defender.ability === ABILITY.KAGAKUHENKAGASU) effDef *= 1.5;
   }
   if (attacker.ability === ABILITY.HARIKIRI && isPhysical) {
-    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) effAtk *= 1.5;
+    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) {
+      effAtk *= 1.5;
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！攻撃が1.5倍になった！`);
+    }
   }
   // ナーバスレイジ：自分がアンコール・ちょうはつ状態の時、攻撃技（物理・特殊）の威力が1.5倍
   if (attacker.ability === ABILITY.NERVOUS_RAGE && move.category !== 'status'
       && ((attacker.encoreTurns || 0) > 0 || (attacker.tauntTurns || 0) > 0)) {
-    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) effAtk *= 1.5;
+    if (!battleField.chemicalGasActive || attacker.ability === ABILITY.KAGAKUHENKAGASU) {
+      effAtk *= 1.5;
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！${isPhysical ? '攻撃' : '特攻'}が1.5倍になった！`);
+    }
   }
 
   const base = Math.floor(Math.floor((2 * level / 5 + 2) * move.power * effAtk / effDef) / 50) + 2;
@@ -897,42 +923,76 @@ function calcDamage(attacker, defender, move, logFn) {
 
   if (move.skinBoost) dmg = Math.floor(dmg * 1.2);
   if (attacker.ability === ABILITY.RESONANCE && move.type === 'sound') {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.2);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.2);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.2)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.KYOKKOU && move.type === 'shine') {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.2);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.2);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.2)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.TECHNICIAN && move.power <= 60) {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.5);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.5);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.5)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.CHIKARAZUKU) {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.3);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.3);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.3)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.KATAI_TSUME && move.category === 'physical') {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.3);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.3);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.3)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.TEKIOURYOKU && (attacker.species.type1 === move.type || attacker.species.type2 === move.type)) {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.5);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.5);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.5)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.SUNA_NO_CHIKARA && battleField.weather === 'sand' && 
       (move.type === 'rock' || move.type === 'ground' || move.type === 'steel')) {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.3);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.3);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.3)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.KIREEJI && KIRU_MOVE_IDS.includes(move.id)) {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.5);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.5);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.5)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.GANJOUAGO && KAMU_MOVE_IDS.includes(move.id)) {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.5);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.5);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.5)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.MEGALAUNCHER && HADOU_MOVE_IDS.includes(move.id)) {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.5);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.5);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.5)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.TETSUNOKOBUSHI && KOBUSHI_MOVE_IDS.includes(move.id)) {
-    if (!gasActive || gasImmune(attacker)) dmg = Math.floor(dmg * 1.5);
+    if (!gasActive || gasImmune(attacker)) {
+      dmg = Math.floor(dmg * 1.5);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.5)}相当になった！`);
+    }
   }
   if (attacker.ability === ABILITY.TOUSOUSHIN && attacker.firstTurn && move.category !== 'status') {
     if (!gasActive || gasImmune(attacker)) {
       dmg = Math.floor(dmg * 1.5);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * 1.5)}相当になった！`);
       attacker.firstTurn = false;
     }
   }
@@ -941,6 +1001,7 @@ function calcDamage(attacker, defender, move, logFn) {
     if (!gasActive || gasImmune(attacker)) {
       const soulBoost = 1 + (attacker.energyStacks * 0.2);
       dmg = Math.floor(dmg * soulBoost);
+      if (logFn) logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！威力が${Math.floor(move.power * soulBoost)}相当になった！`);
     }
   }
 
@@ -1627,17 +1688,6 @@ function executeMove(attacker, defender, move, logFn) {
     logFn(`${attacker.species.name}はきりばらいで場を払った！`);
     return;
   }
-  if (move.id === 180) { // テラーバインド
-    const unlockable = defender.moves.filter(m => m && !m.locked);
-    if (unlockable.length > 0) {
-      const target = pick(unlockable);
-      target.locked = true;
-      logFn(`${defender.species.name}の${target.name}が封じられた！`);
-    } else {
-      logFn(`しかし、全ての技が既に封じられている！`);
-    }
-    return;
-  }
   if (move.id === 474) { // トリックルーム
     if (battleField.trickRoom) {
       battleField.trickRoom = false;
@@ -2134,6 +2184,18 @@ function executeMove(attacker, defender, move, logFn) {
     logFn(`天気が晴れになった！`);
   }
 
+  // ---- テラーバインド：ダメージを与えた上で、相手の技を1つ封じる ----
+  if (move.id === 180 && !defender.fainted) {
+    const unlockable = defender.moves.filter(m => m && !m.locked);
+    if (unlockable.length > 0) {
+      const target = pick(unlockable);
+      target.locked = true;
+      logFn(`${defender.species.name}の${target.name}が封じられた！`);
+    } else {
+      logFn(`しかし、全ての技が既に封じられている！`);
+    }
+  }
+
   if (attacker.currentHp <= 0) {
     attacker.fainted = true;
     logFn(`${attacker.species.name}は倒れた！`, { faint: attacker.side });
@@ -2435,7 +2497,8 @@ function chooseCpuAction(cpuPoke, playerPoke, cpuTeam) {
     return { type: 'move', move: cpuPoke.moves.find(m => m.id === cpuPoke.lastUsedMoveId) || cpuPoke.moves[0] };
   }
 
-  const usable = cpuPoke.moves.filter((m) => m.pp > 0 && !m.locked && !(m.id === 4 && cpuPoke.deaigashiraLocked));
+  const usable = cpuPoke.moves.filter((m) => m.pp > 0 && !m.locked && !(m.id === 4 && cpuPoke.deaigashiraLocked) &&
+    !(cpuPoke.typeLockTurns > 0 && cpuPoke.typeLockType === m.type));
   if (usable.length === 0) return { type: 'move', move: cpuPoke.moves.find(m => m.pp > 0) || cpuPoke.moves[0] };
 
   // げきりん強制連続使用

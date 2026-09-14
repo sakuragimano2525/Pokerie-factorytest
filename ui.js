@@ -1554,9 +1554,9 @@ function partyDetailHtml(p) {
     </div>
   `).join('');
   const ability = getAbilityInfo(p);
-  const statBlock = getStatBlock(p);
+  const statBlock = getStatBlock(p, ['hp', 'atk', 'def', 'spa', 'spd', 'spe']);
   const statsHtml = statBlock.map((s) => `
-    <div class="pd-stat-row">
+    <div class="pd-stat-row ${s.key === 'spe' ? 'pd-stat-spe' : ''}">
       <span class="pd-stat-name">${s.label}</span>
       <span class="pd-stat-values">
         <span class="pd-stat-value">${s.value != null ? s.value : '—'}</span>${s.ev != null ? `<span class="pd-stat-ev">${s.ev}</span>` : ''}
@@ -1581,13 +1581,15 @@ function partyDetailHtml(p) {
       </div>
     </div>
     ${typeChangeInfo}
-    <div class="pd-section-title">わざ</div>
-    <div class="pd-moves">${movesHtml}</div>
-    <div class="pd-lower">
-      <div class="pd-ability-box">
-        <div class="pd-ability-label">特性</div>
-        <div class="pd-ability-name">${ability ? ability.name : '—'}</div>
-        ${ability && ability.desc ? `<div class="pd-ability-desc">${ability.desc}</div>` : ''}
+    <div class="pd-ability-box">
+      <span class="pd-ability-label">特性</span>
+      <span class="pd-ability-name">${ability ? ability.name : '—'}</span>
+      ${ability && ability.desc ? `<div class="pd-ability-desc">${ability.desc}</div>` : ''}
+    </div>
+    <div class="pd-body">
+      <div class="pd-moves-col">
+        <div class="pd-section-title">わざ</div>
+        <div class="pd-moves">${movesHtml}</div>
       </div>
       <div class="pd-stats">${statsHtml}</div>
     </div>
@@ -1972,6 +1974,11 @@ async function doSwitch(newActive, side) {
   if (outgoing && outgoing !== newActive) {
     outgoing.typeLockTurns = 0;
     outgoing.typeLockType = null;
+    // かがくへんかガス：場に出ている間だけ発動する特性なので、
+    // 持ち主が場を離れたら必ず無効化する（手持ちに戻っても効果が残るのはバグ）。
+    if (outgoing.ability === ABILITY.KAGAKUHENKAGASU) {
+      battleField.chemicalGasActive = false;
+    }
     // さいせいりょく：交代で場を離れた瞬間、最大HPの1/3を回復する（瀕死での退場では発動しない）
     if (!outgoing.fainted && outgoing.ability === ABILITY.SAISEIRYOKU) {
       const healAmt = Math.max(1, Math.floor(outgoing.maxHp / 3));

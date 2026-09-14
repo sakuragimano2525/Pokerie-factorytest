@@ -687,6 +687,16 @@ html,body{
   .turn-timer-label{ font-size:8px; }
   .turn-timer-num{ font-size:15px; }
   .opponent-waiting-badge{ font-size:10px; padding:5px 9px; }
+  .party-list{ flex-basis:28%; padding:10px; }
+  .party-detail{ padding:12px 14px; gap:8px; }
+  .pd-body{ flex-direction:column; gap:8px; }
+  .pd-stats{
+    flex:none;
+    display:grid; grid-template-columns: 1fr 1fr; gap:5px 12px;
+    border-left:none; border-top:1px solid rgba(0,0,0,0.08);
+    padding-left:0; padding-top:8px;
+  }
+  .pd-stat-row.pd-stat-spe{ margin-top:0; padding-top:0; border-top:none; }
 }
 
 .sprite-slot{
@@ -1493,7 +1503,7 @@ html,body{
 .party-overlay.show{ opacity:1; pointer-events:auto; }
 .party-panel{
   width: min(96%, 820px);
-  height: min(88%, 340px);
+  height: min(88%, 380px);
   display:flex;
   border-radius: var(--radius-lg);
   overflow:hidden;
@@ -1559,6 +1569,19 @@ html,body{
 
 .pd-section-title{ font-size:11px; font-weight:800; color:var(--ink-soft); margin: 2px 0 -2px; }
 
+.pd-ability-box{
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  padding: 8px 12px;
+  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+}
+.pd-ability-label{ font-size:10px; font-weight:800; color:var(--ink-soft); flex-shrink:0; }
+.pd-ability-name{ font-size:13px; font-weight:800; color:var(--ink); flex-shrink:0; }
+.pd-ability-desc{ font-size:10.5px; color:var(--ink-soft); line-height:1.35; flex-basis:100%; }
+
+.pd-body{ display:flex; gap:14px; align-items:stretch; }
+.pd-moves-col{ flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
 .pd-moves{ display:flex; flex-direction:column; gap:5px; }
 .pd-move-row{
   display:flex; align-items:center; gap:8px;
@@ -1573,24 +1596,16 @@ html,body{
 .pd-move-name{ flex:1; }
 .pd-move-pp{ font-size:10.5px; font-weight:700; color:var(--ink-soft); }
 
-.pd-lower{ display:flex; gap:12px; margin-top:4px; }
-.pd-ability-box{
-  flex: 0 0 46%;
-  border-radius: var(--radius-sm);
-  background: var(--surface-deep);
-  box-shadow: var(--shadow-inset-sm);
-  padding: 10px 12px;
-}
-.pd-ability-label{ font-size:10px; font-weight:800; color:var(--ink-soft); }
-.pd-ability-name{ font-size:13px; font-weight:800; color:var(--ink); margin-top:2px; }
-.pd-ability-desc{ font-size:10px; color:var(--ink-soft); margin-top:4px; line-height:1.4; }
-
 .pd-stats{
-  flex:1;
-  min-width:0;
-  display:grid; grid-template-columns: 1fr 1fr; gap:5px 10px;
+  flex: 0 0 34%;
+  min-width:100px;
+  display:flex; flex-direction:column; gap:5px;
+  border-left: 1px solid rgba(0,0,0,0.08);
+  padding-left: 12px;
+  padding-top: 17px; /* わざ列の「わざ」見出し分の高さに合わせる */
 }
 .pd-stat-row{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; font-size:11.5px; font-weight:700; color:var(--ink); }
+.pd-stat-row.pd-stat-spe{ margin-top:auto; padding-top:6px; border-top:1px solid rgba(0,0,0,0.08); }
 .pd-stat-name{ color:var(--ink-soft); flex-shrink:0; }
 .pd-stat-values{ display:inline-flex; align-items:baseline; gap:6px; margin-left:auto; }
 .pd-stat-value{ color:var(--ink); }
