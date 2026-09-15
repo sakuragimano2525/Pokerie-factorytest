@@ -3037,30 +3037,54 @@ function runNegotiatePhase() {
     $('negotiate-overlay').classList.add('show');
 
     let finished = false;
-    const finishMine = async () => {
-      if (finished) return;
-      finished = true;
-      clearNegoTimer();
-      $('negotiate-overlay').classList.remove('show');
-      $('nego-wait-overlay').classList.add('show');
-      await Net.setNegoDone(true);
+const finishMine = async () => {
+  if (finished) return;
+  finished = true;
+  clearNegoTimer();
+  $('negotiate-overlay').classList.remove('show');
+  $('nego-wait-overlay').classList.add('show');
 
-      // 相手の完了を待つ
-      await new Promise((res) => {
-        const unsub = Net.onOpponentNegoDone((done) => {
-          if (done) { if (unsub) unsub(); res(); }
-        });
-      });
-      $('nego-wait-overlay').classList.remove('show');
-      // nego データの削除は片方（ホスト）だけが行う。
-      // 両者が同時に削除を行うと、片方の削除が相手の「相手完了」読み取りより先に
-      // Firebase上で反映されてしまい、相手が hostDone/guestDone を一生観測できず
-      // 永久に待機し続けるバグ（対戦が始まらない）につながるため。
-      if (state.isHost) {
-        await Net.clearNego();
+  // ★修正の核心★
+  // 先に相手の完了を「購読」してから、自分の done を立てる。
+  // 逆順だと、相手が先に完了→clearNego() した瞬間に nego ノード全体が消え、
+  // まだ購読していない側は null を掴んだまま永久に解決できなくなる
+  // （＝「相手の選出を待っています…」フリーズ）。
+  const waitOpponent = new Promise((res) => {
+    let settled = false;
+    const unsub = Net.onOpponentNegoDone((done) => {
+      if (settled) return;
+      if (done) {
+        settled = true;
+        if (unsub) unsub();
+        res();
       }
-      resolve();
-    };
+    });
+    // 安全弁：5秒待っても相手の done が見えない場合はタイムアウトで先に進む。
+    setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (unsub) unsub();
+      console.warn('[nego] 相手の done を待てずタイムアウトしました。続行します。');
+      res();
+    }, 5000);
+  });
+
+  // 購読を張ったあとに自分の done を立てる
+  await Net.setNegoDone(true);
+
+  // 相手の完了（またはタイムアウト）を待つ
+  await waitOpponent;
+
+  $('nego-wait-overlay').classList.remove('show');
+  // nego データの削除は片方（ホスト）だけが行う。
+  // 両者が同時に削除を行うと、片方の削除が相手の「相手完了」読み取りより先に
+  // Firebase上で反映されてしまい、相手が hostDone/guestDone を一生観測できず
+  // 永久に待機し続けるバグ（対戦が始まらない）につながるため。
+  if (state.isHost) {
+    await Net.clearNego();
+  }
+  resolve();
+};
 
     const onConfirmClick = () => {
       $('btn-nego-confirm').removeEventListener('click', onConfirmClick);
