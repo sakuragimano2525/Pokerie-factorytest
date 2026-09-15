@@ -38,10 +38,15 @@ function rand(min, max) { // inclusive
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 // ---- 個体生成 (getpokemon方式) ----
+// BOSS_SPECIES_ID（ID:1011、MPLの首領）はボス専用のポケモンなので、
+// 3匹・6匹の手持ち生成や交換候補など、通常のランダム抽選には絶対に含めない。
+const BOSS_ONLY_SPECIES_ID = 1011;
+
 function getFinalSpeciesIds() {
   const ids = [];
   for (const key in GAME_DATA.species) {
     const sp = GAME_DATA.species[key];
+    if (sp.id === BOSS_ONLY_SPECIES_ID) continue;
     if (!sp.evolutions || sp.evolutions.length === 0) ids.push(sp.id);
   }
   return ids;
@@ -485,7 +490,7 @@ function addEnergyStacks(poke, amount, logFn) {
   if (!poke || poke.fainted) return;
   const before = poke.energyStacks;
   poke.energyStacks += amount;
-  if (logFn) logFn(`${poke.species.name}のエナジースタックが${amount}増えた！（現在${poke.energyStacks}）`);
+  if (logFn) logFn(`${poke.species.name}の<img src="./energy.png" class="inline-stat-icon" onerror="this.style.visibility='hidden'">が${amount}増えた！（現在${poke.energyStacks}）`);
 
   const gasActive = battleField.chemicalGasActive;
   const gasImmune = poke.ability === ABILITY.KAGAKUHENKAGASU;
@@ -773,6 +778,9 @@ function calcDamage(attacker, defender, move, logFn) {
   const effMoveType = resolveEffectiveMoveType(move, battleField);
   const weatherBallBoosted = (move.id === 503 || move.id === 504) && effMoveType !== move.type;
   const effMovePower = weatherBallBoosted ? move.power * 2 : move.power;
+  if (weatherBallBoosted && logFn) {
+    logFn(`${typeJp(effMoveType)}タイプに変わり、威力が${effMovePower}になった！`);
+  }
   move = { ...move, type: effMoveType, power: effMovePower };
 
   if (defender.ability === ABILITY.FUYU && move.type === 'ground' && attacker.ability !== ABILITY.KATAYABURI) {
@@ -1040,9 +1048,16 @@ function calcDamage(attacker, defender, move, logFn) {
   return { damage: dmg, typeMult, isCrit };
 }
 
+// あめの時に必中となる技ID（かみなり・ルクシオンエア・しはいのかぜ・アクアスワール）
+const RAIN_ALWAYS_HIT_MOVES = [73, 78, 156, 357];
+// ゆきの時に必中となる技ID（こごえるかぜ・ふぶき・ヘイルストーム）
+const SNOW_ALWAYS_HIT_MOVES = [232, 235, 237];
+
 function checkAccuracy(attacker, defender, move) {
   if (move.accuracy === undefined || move.accuracy === null || move.accuracy >= 999) return true;
   if (attacker.ability === ABILITY.NO_GUARD || defender.ability === ABILITY.NO_GUARD) return true;
+  if (battleField.weather === 'rain' && RAIN_ALWAYS_HIT_MOVES.includes(move.id)) return true;
+  if (battleField.weather === 'snow' && SNOW_ALWAYS_HIT_MOVES.includes(move.id)) return true;
 
   const accRank = attacker.ranks.acc;
   const evaRank = defender.ranks.eva;
@@ -1546,8 +1561,48 @@ function executeMove(attacker, defender, move, logFn) {
   const attackerHpAtMoveStart = attacker.currentHp;
   const defenderHpAtMoveStart = defender.currentHp;
 
+  // ---- まもる（成否判定・状態セット） ----
+  // 本家仕様：連続で使うほど成功率が下がる（100%→50%→25%→…）。
+  // 前のターンにまもるを使っていなかった（成功しなかった）場合は連続カウントをリセットする。
+  if (move.id === 2019) {
+    // まもるも通常の技と同様にPPを消費する（成功・失敗を問わず1消費）。
+    // これが無いとまもるだけPPが一切減らないバグになる。対人戦でも、プレイヤー同士が
+    // 参照している同じmoveオブジェクト（moves配列の要素）を直接書き換えているため、
+    // 既存のPP同期処理（buildTurnEndPayload等）にそのまま乗って自動的に同期される。
+    if (move.pp <= 0) {
+      logFn(`${attacker.species.name}は技が出せない！`);
+      return;
+    }
+    move.pp--;
+    const streak = attacker.protectStreak || 0;
+    const successRate = 100 / Math.pow(2, streak);
+    if (rand(1, 100) <= successRate) {
+      attacker.protecting = true;
+      attacker.protectStreak = streak + 1;
+      logFn(`${attacker.species.name}は身を守った！`);
+    } else {
+      attacker.protecting = false;
+      attacker.protectStreak = 0;
+      logFn(`しかし失敗した！`);
+    }
+    return;
+  }
+
+  // ---- まもるによる技のブロック ----
+  // 相手に向けた技（自分自身をtargetにするものは対象外）はまもるで防がれる。
+  // ステルスロック・設置技・リフレクター等の「場」に効果を及ぼす技は本家同様まもるでは防げない。
+  if (defender.protecting && attacker !== defender
+      && move.id !== 318 && move.id !== 495 && move.id !== 475 && move.id !== 476) {
+    logFn(`${defender.species.name}はまもるので技をうけつけない！`);
+    return;
+  }
+
   // ---- マジックミラー ----
-  if (defender.ability === ABILITY.MAGIC_MIRROR && move.category === 'status' && attacker !== defender) {
+  // マジックミラーは「相手に向けて撃つ変化技」のみを跳ね返す特性。
+  // つるぎのまい等、相手に効果を及ぼさない自分強化オンリーの技（oppRank/oppStatusが無く、
+  // かつ設置技でもない）まで跳ね返っていたバグを修正。
+  const targetsOpponent = move.oppRank || move.oppStatus || move.id === 318 || move.id === 495;
+  if (defender.ability === ABILITY.MAGIC_MIRROR && move.category === 'status' && attacker !== defender && targetsOpponent) {
     logFn(`${defender.species.name}のマジックミラーが発動！${attacker.species.name}に跳ね返した！`);
     const tempAttacker = defender;
     const tempDefender = attacker;
@@ -1621,6 +1676,7 @@ function executeMove(attacker, defender, move, logFn) {
   if (skinMap[attacker.ability] && move.type === 'normal') {
     move.type = skinMap[attacker.ability];
     move.skinBoost = true;
+    logFn(`${attacker.species.name}の${abilityJp(attacker.ability)}が発動！${typeJp(move.type)}タイプに変わった！`);
   }
 
   let suppressSecondary = false;
@@ -1945,7 +2001,7 @@ function executeMove(attacker, defender, move, logFn) {
       energyConsumed = consumeEnergyStacks(attacker, logFn);
       if (energyConsumed > 0) {
         modifiedPower += energyConsumed * 20;
-        logFn(`${attacker.species.name}は エナジースタック ${energyConsumed} を 全て 消費して わざの 威力が上がった！`);
+        logFn(`${attacker.species.name}は <img src="./energy.png" class="inline-stat-icon" onerror="this.style.visibility='hidden'"> ${energyConsumed} を 全て 消費して わざの 威力が上がった！`);
         if (energyConsumed >= 5) {
           const rankData = [100, 0, 0, 2, 0, 0, 0, 0];
           applyRankChange(attacker, rankData, logFn);
@@ -1958,7 +2014,7 @@ function executeMove(attacker, defender, move, logFn) {
       energyConsumed = consumeEnergyStacks(attacker, logFn);
       if (energyConsumed > 0) {
         modifiedPower += energyConsumed * 25;
-        logFn(`${attacker.species.name}は エナジースタック ${energyConsumed} を 全て 消費して わざの 威力が上がった！`);
+        logFn(`${attacker.species.name}は <img src="./energy.png" class="inline-stat-icon" onerror="this.style.visibility='hidden'"> ${energyConsumed} を 全て 消費して わざの 威力が上がった！`);
       }
     }
   }
@@ -1970,7 +2026,7 @@ function executeMove(attacker, defender, move, logFn) {
         const railConsumed = consumeEnergyStacks(attacker, logFn);
         if (railConsumed > 0) {
           modifiedPower += railConsumed * 30;
-          logFn(`${attacker.species.name}のレールガン！ エナジースタック ${railConsumed} を 全て 消費して わざの 威力が上がった！`);
+          logFn(`${attacker.species.name}のレールガン！ <img src="./energy.png" class="inline-stat-icon" onerror="this.style.visibility='hidden'"> ${railConsumed} を 全て 消費して わざの 威力が上がった！`);
         }
       }
     }
@@ -2307,6 +2363,19 @@ function executeMove(attacker, defender, move, logFn) {
 // 呼び出しシグネチャ: onImmediateSwitch(side) -> Promise<新しいアクティブポケモン or null>
 // null は「交代できなかった（控えなし／バインド中など）」を意味し、その場合は元のポケモンのまま続行する。
 async function runTurn(playerAction, cpuAction, playerPoke, cpuPoke, logFn, onImmediateSwitch) {
+  // ---- まもるの状態リセット ----
+  // まもるは「使ったそのターンだけ」有効な状態。ここで一旦解除しておき、
+  // このターン中にまもるが選択された場合はexecuteMove内で改めてtrueになる。
+  // 連続成功率のカウントも、このターンにまもるを選ばなかった側はリセットする
+  // （本家仕様：前のターンにまもるを使っていないと連続ボーナスが途切れる）。
+  [{ poke: playerPoke, action: playerAction }, { poke: cpuPoke, action: cpuAction }].forEach(({ poke, action }) => {
+    if (!poke.fainted) {
+      poke.protecting = false;
+      const usingProtect = action.type === 'move' && action.move && action.move.id === 2019;
+      if (!usingProtect) poke.protectStreak = 0;
+    }
+  });
+
   const actions = [];
   if (playerAction.type === 'move') actions.push({ side: 'player', poke: playerPoke, target: cpuPoke, move: playerAction.move });
   if (cpuAction.type === 'move') actions.push({ side: 'cpu', poke: cpuPoke, target: playerPoke, move: cpuAction.move });

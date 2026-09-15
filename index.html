@@ -78,31 +78,158 @@ html,body{
 
 /* ================= TITLE SCREEN ================= */
 #screen-title{
-  flex-direction:column; gap:28px;
+  flex-direction:column;
+  position:relative;
+  overflow:hidden;
+  padding: 0;
   background:
-    radial-gradient(circle at 20% 20%, rgba(91,140,255,0.18), transparent 55%),
-    radial-gradient(circle at 80% 75%, rgba(139,107,255,0.16), transparent 55%),
+    radial-gradient(circle at 18% 12%, rgba(91,140,255,0.24), transparent 52%),
+    radial-gradient(circle at 88% 18%, rgba(139,107,255,0.22), transparent 52%),
+    radial-gradient(circle at 80% 90%, rgba(79,214,122,0.16), transparent 50%),
+    radial-gradient(circle at 10% 88%, rgba(255,93,93,0.12), transparent 50%),
     var(--bg-0);
 }
-.title-card{
-  padding: 40px 56px;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-light);
+.title-bg-orb{
+  position:absolute;
+  border-radius:50%;
+  filter: blur(2px);
+  opacity:0.5;
+  pointer-events:none;
+  animation: titleOrbFloat 9s ease-in-out infinite;
+}
+.title-bg-orb.orb-1{
+  width:140px; height:140px; top:8%; left:8%;
+  background: radial-gradient(circle at 35% 35%, rgba(91,140,255,0.35), transparent 70%);
+  animation-duration: 10s;
+}
+.title-bg-orb.orb-2{
+  width:110px; height:110px; bottom:10%; right:10%;
+  background: radial-gradient(circle at 35% 35%, rgba(139,107,255,0.32), transparent 70%);
+  animation-duration: 12s; animation-delay: -3s;
+}
+.title-bg-orb.orb-3{
+  width:70px; height:70px; top:16%; right:16%;
+  background: radial-gradient(circle at 35% 35%, rgba(255,214,0,0.30), transparent 70%);
+  animation-duration: 8s; animation-delay: -1.5s;
+}
+.title-bg-orb.orb-4{
+  width:85px; height:85px; bottom:16%; left:14%;
+  background: radial-gradient(circle at 35% 35%, rgba(79,214,122,0.28), transparent 70%);
+  animation-duration: 11s; animation-delay: -5s;
+}
+@keyframes titleOrbFloat{
+  0%,100%{ transform: translate(0,0) scale(1); }
+  50%{ transform: translate(14px,-18px) scale(1.08); }
+}
+
+/* ---- 全画面ヘッダー（左：名前 / 右：アイコン群、重ならないようflexで配置） ---- */
+.title-topbar{
+  position:absolute;
+  top:0; left:0; right:0;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding: max(16px, env(safe-area-inset-top)) 18px 0;
+  z-index:3;
+}
+.title-topbar-right{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex:0 0 auto;
+}
+.title-name-btn{
+  display:flex; align-items:center; gap:8px;
+  padding:10px 20px 10px 14px;
+  border-radius:999px;
+  flex:0 1 auto;
+  min-width:0;
+}
+.title-name-btn .tnb-icon{ font-size:15px; line-height:1; flex:0 0 auto; }
+.title-name-btn .tnb-label{ font-size:12.5px; font-weight:800; max-width:40vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+
+/* ---- 中央：フルスクリーンで映えるヒーローエリア ---- */
+.title-hero{
+  flex:1 1 auto;
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:0;
+  position:relative;
+  z-index:1;
+  padding: 90px 24px 40px;
+}
+.title-emblem{
+  width:84px; height:84px;
+  margin-bottom:22px;
+  border-radius:50%;
+  background: linear-gradient(180deg, #ff5d5d 0%, #ff5d5d 48%, var(--ink) 48%, var(--ink) 54%, #fff 54%, #fff 100%);
+  box-shadow: var(--shadow-light), inset 0 0 0 3px rgba(51,57,74,0.12);
+  position:relative;
+  animation: emblemFloat 4.5s ease-in-out infinite;
+}
+.title-emblem::before{
+  content:'';
+  position:absolute; inset:0;
+  border-radius:50%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.28) 0%, transparent 45%);
+  mix-blend-mode: overlay;
+}
+.title-emblem::after{
+  content:'';
+  position:absolute; top:50%; left:50%;
+  width:14px; height:14px;
+  transform: translate(-50%,-50%);
+  background:#fff;
+  border-radius:50%;
+  box-shadow: 0 0 0 3px var(--ink), inset 0 0 0 2px var(--surface);
+}
+@keyframes emblemFloat{
+  0%,100%{ transform: translateY(0); }
+  50%{ transform: translateY(-8px); }
+}
+.title-logo-wrap{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
   text-align:center;
-  max-width: 90vw;
 }
 .title-logo{
-  font-size: clamp(28px, 5vw, 48px);
+  font-size: clamp(32px, 6.4vw, 58px);
   font-weight:900;
   letter-spacing: 2px;
-  margin:0 0 6px;
-  background: linear-gradient(120deg, var(--accent-a), var(--accent-b));
+  margin:0;
+  line-height:1.15;
+  max-width: 92vw;
+  background: linear-gradient(120deg, var(--accent-a), var(--accent-b) 55%, var(--accent-hp));
+  background-size: 200% auto;
   -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation: titleLogoSheen 5s ease-in-out infinite;
 }
-.title-sub{
-  margin:0; color: var(--ink-soft); font-weight:700; font-size: clamp(12px,1.8vw,15px);
-  letter-spacing:3px;
+@keyframes titleLogoSheen{
+  0%,100%{ background-position: 0% center; }
+  50%{ background-position: 100% center; }
+}
+.title-logo-sub{
+  font-size: clamp(11px, 1.6vw, 14px);
+  font-weight:800;
+  letter-spacing: 6px;
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  opacity:0.7;
+  background:none; -webkit-background-clip:unset; background-clip:unset;
+  animation:none;
+}
+.title-underline{
+  width:72px; height:4px; margin:20px auto 0;
+  border-radius:999px;
+  background: linear-gradient(90deg, var(--accent-a), var(--accent-b));
+  opacity:0.55;
 }
 .tap-instruction{
   margin-top:22px; font-size:13px; color: var(--ink-soft); font-weight:700;
@@ -143,20 +270,40 @@ html,body{
 /* ---- Title menu (2 buttons: NPC / Player) ---- */
 .title-menu-row{
   display:flex;
-  gap: 18px;
-  margin-top: 26px;
+  gap: 20px;
+  margin-top: 40px;
   justify-content: center;
   flex-wrap: wrap;
+  width: 100%;
+  max-width: 520px;
 }
 .title-menu-btn{
-  padding: 20px 32px;
-  min-width: 180px;
-  display:flex; flex-direction:column; align-items:center; gap:6px;
-  border-radius: var(--radius-md);
+  padding: 24px 28px;
+  flex: 1 1 200px;
+  min-width: 190px;
+  display:flex; flex-direction:column; align-items:center; gap:7px;
+  border-radius: var(--radius-lg);
+  transition: box-shadow .12s ease, transform .18s cubic-bezier(.2,.8,.2,1);
 }
-.title-menu-btn .tmb-title{ font-size: 16px; font-weight: 900; }
-.title-menu-btn .tmb-sub{ font-size: 11px; font-weight: 700; opacity: 0.75; }
+.title-menu-btn:active{ transform: scale(0.98); }
+.title-menu-btn .tmb-title{ font-size: 17px; font-weight: 900; }
+.title-menu-btn .tmb-sub{ font-size: 11.5px; font-weight: 700; opacity: 0.75; }
 .title-menu-btn.primary .tmb-sub{ color: #fff; opacity: 0.85; }
+@media (hover:hover){
+  .title-menu-btn:hover{ transform: translateY(-3px); }
+}
+@media (max-width: 420px){
+  .title-menu-row{ gap:14px; }
+  .title-menu-btn{ padding:20px 18px; min-width:0; }
+}
+@media (max-height: 420px){
+  .title-hero{ padding: 60px 24px 20px; }
+  .title-emblem{ width:56px; height:56px; margin-bottom:12px; }
+  .title-underline{ margin-top:12px; }
+  .title-menu-row{ margin-top:20px; }
+  .title-menu-btn{ padding:14px 20px; }
+  .tap-instruction{ margin-top:12px; }
+}
 
 /* ================= MULTIPLAYER MENU ================= */
 #screen-multiplayer{
@@ -973,6 +1120,12 @@ html,body{
 .log-entry-tag{
   font-size: 10.5px; font-weight: 800; opacity: 0.85; margin-right: 4px;
 }
+.inline-stat-icon{
+  width: 1em; height: 1em;
+  vertical-align: -0.15em;
+  object-fit: contain;
+  margin: 0 1px;
+}
 .log-panel-empty{
   align-self:center; color: var(--muted); font-size: 12.5px; padding: 20px;
 }
@@ -1464,6 +1617,20 @@ html,body{
 .pick-count{ font-weight:800; font-size:12px; color:var(--ink-soft); margin: 0; }
 #btn-pick-confirm[disabled]{ opacity:0.4; cursor:not-allowed; }
 
+/* ---- 選出/交換カード：まだ図鑑未登録のポケモンに付ける控えめなマーク ---- */
+.tpc-new-badge{
+  position:absolute; bottom:6px; right:6px;
+  background: linear-gradient(135deg, #ff9d3d, #ff6a5d);
+  color:#fff; font-weight:900; font-size:8px;
+  letter-spacing:0.02em;
+  padding:2px 6px;
+  border-radius:999px;
+  box-shadow: 1px 1px 3px rgba(0,0,0,0.25);
+  z-index:4;
+  pointer-events:none;
+}
+#pick-overlay .tpc-new-badge{ font-size:7px; padding:1.5px 5px; bottom:4px; right:4px; }
+
 /* ---- 対人選出タイマー & 交換フェーズ ---- */
 .pick-timer-badge{
   position:absolute; top:10px; right:14px;
@@ -1656,6 +1823,223 @@ html,body{
 }
 .fs-start-btn:active{ transform: scale(0.97); }
 
+.title-settings-btn{
+  position:static;
+  flex:0 0 auto;
+  width:40px;
+  height:40px;
+  border-radius:50%;
+  border:none;
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  font-size:19px;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer;
+  z-index:5;
+}
+.title-settings-btn:active{ transform: scale(0.94); }
+.title-pokedex-btn{ font-size:18px; }
+
+/* ---- 図鑑 ---- */
+.pokedex-overlay{
+  position:absolute; inset:0; z-index:230;
+  background: var(--bg-0);
+  display:flex; flex-direction:column;
+  opacity:0; pointer-events:none;
+  transition: opacity .18s ease;
+}
+.pokedex-overlay.show{ opacity:1; pointer-events:auto; }
+.pokedex-header{
+  position:relative;
+  flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  padding: 14px 16px 10px;
+}
+.pokedex-close-btn{
+  position:absolute; top:10px; left:14px;
+  width:38px; height:38px; border-radius:50%;
+  border:none; background: var(--surface);
+  box-shadow: var(--shadow-light-sm);
+  font-size:20px; font-weight:900; color:var(--ink-soft);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; z-index:2; line-height:1;
+}
+.pokedex-close-btn:active{ transform: scale(0.94); box-shadow: var(--shadow-inset-sm); }
+.pokedex-count{
+  font-weight:900; font-size:15px; color:var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow-inset-sm);
+  border-radius: 999px;
+  padding: 8px 22px;
+}
+.pokedex-grid{
+  flex:1; min-height:0;
+  overflow-y:auto;
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap:10px;
+  padding: 6px 14px 22px;
+}
+.pokedex-cell{
+  display:flex; flex-direction:column; align-items:center;
+  padding: 8px 4px 7px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-light-sm);
+}
+.pokedex-cell.locked{ opacity:0.55; }
+.pokedex-cell-imgwrap{
+  width:52px; height:52px;
+  border-radius:50%;
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+  margin-bottom:5px;
+}
+.pokedex-cell-imgwrap img{
+  width:42px; height:42px; object-fit:contain;
+  image-rendering: pixelated;
+}
+.pokedex-cell.locked .pokedex-cell-imgwrap img{ filter: brightness(0) opacity(0.35); }
+.pokedex-cell-no{ font-size:8.5px; font-weight:800; color:var(--ink-soft); }
+.pokedex-cell-name{ font-size:10.5px; font-weight:800; color:var(--ink); text-align:center; line-height:1.2; margin-top:1px; }
+.pokedex-cell.locked .pokedex-cell-name{ color:var(--ink-soft); }
+
+@media (max-height: 420px){
+  .pokedex-header{ padding: 8px 12px 6px; }
+  .pokedex-count{ font-size:12.5px; padding:6px 16px; }
+  .pokedex-close-btn{ width:32px; height:32px; font-size:17px; top:6px; left:10px; }
+  .pokedex-grid{ grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap:7px; padding:4px 10px 14px; }
+  .pokedex-cell-imgwrap{ width:40px; height:40px; }
+  .pokedex-cell-imgwrap img{ width:32px; height:32px; }
+  .pokedex-cell-name{ font-size:9px; }
+}
+
+/* ---- 図鑑：詳細画面（全画面・スクロール不要） ---- */
+.pokedex-detail-overlay{
+  position:absolute; inset:0; z-index:240;
+  background: var(--bg-0);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; pointer-events:none; transition: opacity .18s ease;
+}
+.pokedex-detail-overlay.show{ opacity:1; pointer-events:auto; }
+.pokedex-detail-close{
+  position:absolute; top:12px; left:14px;
+  width:38px; height:38px; border-radius:50%;
+  border:none; background: var(--surface);
+  box-shadow: var(--shadow-light-sm);
+  font-size:20px; font-weight:900; color:var(--ink-soft);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; line-height:1; z-index:2;
+}
+.pokedex-detail-close:active{ transform: scale(0.94); box-shadow: var(--shadow-inset-sm); }
+.pokedex-detail-card{
+  width:100%; height:100%;
+  max-width: 780px;
+  display:flex; flex-direction:column;
+  padding: 12px 22px 14px;
+  box-sizing:border-box;
+}
+.pdx-header{ flex-shrink:0; display:flex; align-items:center; gap:12px; padding: 2px 4px 0 52px; }
+.pdx-imgwrap{
+  flex-shrink:0;
+  width:58px; height:58px; border-radius:50%;
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+.pdx-imgwrap img{ width:46px; height:46px; object-fit:contain; image-rendering:pixelated; }
+.pdx-header-text{ min-width:0; }
+.pdx-no{ font-size:10.5px; font-weight:800; color:var(--ink-soft); }
+.pdx-name{ font-size:16px; font-weight:900; color:var(--ink); margin:1px 0 5px; }
+.pdx-types{ display:flex; gap:5px; flex-wrap:wrap; }
+.pdx-body{
+  flex:1; min-height:0;
+  display:flex; gap:18px;
+  margin-top:10px;
+}
+.pdx-col{ flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; }
+.pdx-section-title{ flex-shrink:0; font-size:11px; font-weight:800; color:var(--ink-soft); margin:0 0 6px; }
+.pdx-abilities{ flex:1; min-height:0; display:flex; flex-direction:column; gap:6px; justify-content:flex-start; }
+.pdx-ability-row{
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  padding: 7px 11px;
+}
+.pdx-ability-name{ font-size:12px; font-weight:800; color:var(--ink); }
+.pdx-ability-desc{
+  font-size:10px; color:var(--ink-soft); line-height:1.3; margin-top:3px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.pdx-stats{ flex:1; min-height:0; display:flex; flex-direction:column; gap:6px; justify-content:flex-start; }
+.pdx-stat-row{
+  display:flex; align-items:center; justify-content:space-between;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  padding: 6px 13px;
+  font-size:12px; font-weight:800; color:var(--ink);
+}
+.pdx-stat-rank{ font-size:15px; font-weight:900; }
+.pdx-rank-S{ color:#1a3fd6; }
+.pdx-rank-A{ color:#d6b800; }
+.pdx-rank-B{ color:#e0403f; }
+.pdx-rank-C{ color:#2fae4e; }
+.pdx-rank-D{ color:#37c2d6; }
+.pdx-rank-E{ color:#8b8f9a; }
+
+@media (max-height: 420px){
+  .pokedex-detail-card{ padding: 8px 16px 10px; }
+  .pokedex-detail-close{ width:30px; height:30px; font-size:16px; top:6px; left:8px; }
+  .pdx-header{ gap:8px; padding-left:40px; }
+  .pdx-imgwrap{ width:46px; height:46px; }
+  .pdx-imgwrap img{ width:36px; height:36px; }
+  .pdx-name{ font-size:13px; margin:1px 0 3px; }
+  .pdx-body{ gap:12px; margin-top:6px; }
+  .pdx-section-title{ font-size:10px; margin-bottom:4px; }
+  .pdx-ability-row{ padding:5px 8px; }
+  .pdx-ability-name{ font-size:10.5px; }
+  .pdx-ability-desc{ font-size:9px; -webkit-line-clamp:1; }
+  .pdx-stat-row{ padding:5px 10px; font-size:10.5px; }
+  .pdx-stat-rank{ font-size:13px; }
+}
+
+.settings-overlay{
+  position:absolute; inset:0; z-index:220;
+  background: rgba(20,22,30,0.45);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; pointer-events:none;
+  transition: opacity .15s ease;
+}
+.settings-overlay.show{ opacity:1; pointer-events:auto; }
+.settings-card{
+  padding: 22px 24px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-light);
+  text-align:center;
+  max-width: 82%;
+  width: 300px;
+}
+.settings-title{ margin:0 0 14px; font-weight:800; font-size:14px; color:var(--ink); }
+.settings-input{
+  width:100%;
+  box-sizing:border-box;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid rgba(0,0,0,0.12);
+  font-size:14px;
+  margin-bottom:14px;
+  outline:none;
+}
+.settings-btn-row{ display:flex; gap:12px; justify-content:center; }
+.settings-btn{ padding:9px 26px; border-radius:999px; font-size:13px; }
+.settings-close-btn{ background: linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff; }
+
+
 .t-bug{background:#8fbb2e;} .t-dark{background:#5a5366;} .t-dragon{background:#7161e0;}
 .t-electric{background:#e8c832;color:#5a4b00;} .t-fairy{background:#ee9bd0;color:#6b2a56;}
 .t-fighting{background:#c0432c;} .t-fire{background:#f0812e;} .t-flying{background:#8fa9ee;}
@@ -1701,10 +2085,29 @@ html,body{
 
   <!-- ================= TITLE ================= -->
   <div id="screen-title" class="screen">
-    <div class="title-card">
-      <p class="title-logo">ポケリエ バトルファクトリー</p>
-      <p class="title-logo" style="font-size:0.55em; margin-top:-14px;">BATTLE FACTORY</p>
-      <p class="title-sub">MPLだけの オリジナル対戦ゲーム</p>
+    <div class="title-bg-orb orb-1"></div>
+    <div class="title-bg-orb orb-2"></div>
+    <div class="title-bg-orb orb-3"></div>
+    <div class="title-bg-orb orb-4"></div>
+
+    <div class="title-topbar">
+      <button id="btn-title-name" class="neu-btn title-name-btn" type="button" aria-label="名前を変更">
+        <span class="tnb-icon">👤</span>
+        <span class="tnb-label" id="title-name-label">トレーナー0000</span>
+      </button>
+      <div class="title-topbar-right">
+        <button id="btn-title-pokedex" class="title-settings-btn title-pokedex-btn" type="button" aria-label="図鑑">📖</button>
+        <button id="btn-title-settings" class="title-settings-btn" type="button" aria-label="オプション">⚙️</button>
+      </div>
+    </div>
+
+    <div class="title-hero">
+      <div class="title-emblem"></div>
+      <div class="title-logo-wrap">
+        <p class="title-logo">ポケリエ バトルファクトリー</p>
+        <p class="title-logo-sub">BATTLE FACTORY</p>
+      </div>
+      <div class="title-underline"></div>
       <div class="title-menu-row">
         <button id="btn-npc-battle" class="neu-btn primary title-menu-btn" type="button">
           <span class="tmb-title">NPCとバトル</span>
@@ -1989,6 +2392,24 @@ html,body{
     <button class="neu-btn party-close-btn" id="trade-detail-close">とじる</button>
   </div>
 
+  <!-- 自分の名前変更モーダル（ホーム画面左上のボタンから開く） -->
+  <div class="multi-modal-overlay" id="profile-name-modal">
+    <div class="multi-modal-card">
+      <p class="multi-modal-title">名前を変更</p>
+
+      <div>
+        <label class="multi-input-label" for="input-profile-name">あなたの名前</label>
+        <input type="text" id="input-profile-name" class="multi-input" maxlength="10" placeholder="トレーナー0000" autocomplete="off">
+        <div class="multi-input-hint"><span id="profile-name-char-count">0</span> / 10</div>
+      </div>
+
+      <div class="multi-modal-btn-row">
+        <button class="neu-btn multi-modal-btn" id="profile-name-cancel" type="button">キャンセル</button>
+        <button class="neu-btn primary multi-modal-btn" id="profile-name-confirm" type="button">けってい</button>
+      </div>
+    </div>
+  </div>
+
   <!-- マルチプレイ用モーダル（あいことば入室のみ。ルーム作成は名前入力なしで即実行） -->
   <div class="multi-modal-overlay" id="name-modal">
     <div class="multi-modal-card">
@@ -2016,6 +2437,53 @@ html,body{
       <div class="confirm-btn-row">
         <button class="neu-btn confirm-btn confirm-yes" id="confirm-yes">はい</button>
         <button class="neu-btn confirm-btn confirm-no" id="confirm-no">いいえ</button>
+      </div>
+    </div>
+  </div>
+  <!-- 開発用オプション：ホーム画面右上の⚙️から開く。特定IDを入力すると
+       NPC連勝モードのデバッグ用途で連勝数を任意の値から開始できるようにする。 -->
+  <div class="settings-overlay" id="settings-overlay">
+    <div class="settings-card">
+      <p class="settings-title">ID を入力</p>
+      <input type="text" id="settings-id-input" class="settings-input" placeholder="ID" autocomplete="off">
+      <div class="settings-btn-row">
+        <button class="neu-btn settings-btn settings-close-btn" id="settings-confirm-btn" type="button">けってい</button>
+        <button class="neu-btn settings-btn" id="settings-cancel-btn" type="button">とじる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 図鑑：NPC戦・対人戦を問わず、手持ちに入れて戦った（勝敗不問）ポケモンが登録される。
+       ホーム画面の⚙️の左の📖から開く。全画面オーバーレイで、左上の×で閉じる。 -->
+  <div class="pokedex-overlay" id="pokedex-overlay">
+    <div class="pokedex-header">
+      <button id="pokedex-close-btn" class="pokedex-close-btn" type="button" aria-label="とじる">×</button>
+      <div class="pokedex-count" id="pokedex-count">見つけたポケモンの数 0/0</div>
+    </div>
+    <div class="pokedex-grid" id="pokedex-grid"></div>
+  </div>
+
+  <!-- 図鑑：発見済みポケモンをタップした時の詳細画面 -->
+  <div class="pokedex-detail-overlay" id="pokedex-detail-overlay">
+    <button id="pokedex-detail-close" class="pokedex-detail-close" type="button" aria-label="とじる">×</button>
+    <div class="pokedex-detail-card">
+      <div class="pdx-header">
+        <div class="pdx-imgwrap"><img id="pdx-detail-img" src="" alt=""></div>
+        <div class="pdx-header-text">
+          <div class="pdx-no" id="pdx-detail-no"></div>
+          <div class="pdx-name" id="pdx-detail-name"></div>
+          <div class="pdx-types" id="pdx-detail-types"></div>
+        </div>
+      </div>
+      <div class="pdx-body">
+        <div class="pdx-col">
+          <div class="pdx-section-title">とくせい</div>
+          <div class="pdx-abilities" id="pdx-detail-abilities"></div>
+        </div>
+        <div class="pdx-col">
+          <div class="pdx-section-title">ステータス</div>
+          <div class="pdx-stats" id="pdx-detail-stats"></div>
+        </div>
       </div>
     </div>
   </div>

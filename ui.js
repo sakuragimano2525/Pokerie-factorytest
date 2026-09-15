@@ -38,16 +38,63 @@ function activeStatusBadges(poke) {
   return badges;
 }
 
+// 10連勝ごと（10戦目・20戦目・30戦目…）に登場するボスの固定ポケモンID
+const BOSS_SPECIES_ID = 1011;
+
+/* =========================================================
+   プレイヤープロフィール（自分の表示名）
+   ホーム画面の名前変更ボタンで設定し、localStorageに永続化する。
+   未設定時はデフォルト名「トレーナー(ランダム4桁)」を自動生成して保存する。
+   ========================================================= */
+const PLAYER_NAME_STORAGE_KEY = 'pokeriere_player_name_v1';
+const PLAYER_NAME_MAX_LEN = 10;
+
+function generateAutoPlayerName() {
+  const n = 1000 + Math.floor(Math.random() * 9000);
+  return `トレーナー${n}`;
+}
+
+const PlayerProfile = (() => {
+  let name = '';
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(PLAYER_NAME_STORAGE_KEY);
+      if (raw && raw.trim()) { name = raw.trim(); return; }
+    } catch (e) {}
+    // 未設定 or 読み込み失敗時はデフォルト名を生成して保存しておく
+    name = generateAutoPlayerName();
+    save();
+  }
+
+  function save() {
+    try { localStorage.setItem(PLAYER_NAME_STORAGE_KEY, name); } catch (e) {}
+  }
+
+  function get() { return name; }
+
+  function set(newName) {
+    const trimmed = (newName || '').trim().slice(0, PLAYER_NAME_MAX_LEN);
+    name = trimmed || generateAutoPlayerName();
+    save();
+    return name;
+  }
+
+  load();
+  return { get, set };
+})();
+
 const state = {
   playerTeam: [],
   cpuTeam: [],
   playerActive: null,
   cpuActive: null,
   winStreak: 0,
+  isBossBattle: false,
   battleBusy: false,
   screen: 'title',
   // ---- マルチプレイ用 ----
-  playerName: '',
+  playerName: PlayerProfile.get(),
   opponentName: '',
   roomId: null,
   isHost: false,
@@ -55,6 +102,57 @@ const state = {
   mpHostEvents: [],
   turnNumber: 1,
 };
+
+/* =========================================================
+   図鑑（ポケデックス）
+   NPC戦・対人戦を問わず、手持ちに入って戦った（勝敗は問わない）
+   ポケモンの種族IDを記録する。localStorageに永続化する。
+   ========================================================= */
+const POKEDEX_STORAGE_KEY = 'pokeriere_pokedex_v1';
+
+const Pokedex = (() => {
+  let seen = new Set();
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(POKEDEX_STORAGE_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) seen = new Set(arr.map((n) => Number(n)));
+      }
+    } catch (e) { seen = new Set(); }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(POKEDEX_STORAGE_KEY, JSON.stringify([...seen]));
+    } catch (e) {}
+  }
+
+  // team: state.playerTeam のようなポケモン配列（各要素が speciesId を持つ）
+  function registerTeam(team) {
+    if (!Array.isArray(team)) return;
+    let changed = false;
+    for (const p of team) {
+      if (!p || p.speciesId === undefined || p.speciesId === null) continue;
+      if (!seen.has(p.speciesId)) { seen.add(p.speciesId); changed = true; }
+    }
+    if (changed) save();
+  }
+
+  function has(speciesId) { return seen.has(speciesId); }
+  function count() { return seen.size; }
+
+  load();
+  return { registerTeam, has, count };
+})();
+
+// 選出/交換カードに載せる「図鑑未登録」マーク。既存の !ボタン（右上）や
+// 選出順バッジ（左上）と重ならないよう、右下に小さく表示する。
+function pokedexNewBadgeHtml(speciesId) {
+  if (Pokedex.has(speciesId)) return '';
+  return `<span class="tpc-new-badge">NEW</span>`;
+}
 
 /* =========================================================
    アセットプリロード（画像・効果音・BGM）
@@ -100,7 +198,7 @@ const AssetPreloader = (() => {
   // BGM候補の事前ロード
   // ※ iOS Safari/WebKitには、同時に保持できる<audio>要素（デコーダー）の数に上限があり、
   //   これを超えると既存のAudio要素が予告なく無効化される。
-  //   バトルBGM候補は20曲もあり、全曲を毎回事前ロードするとこの上限を超えやすく、
+  //   バトルBGM候補は25曲もあり、全曲を毎回事前ロードするとこの上限を超えやすく、
   //   「バトル中、ポケモンの交代あたりで再生中のBGMが突然消える」不具合の主因になっていた
   //   （交代演出やSEの再生でAudio要素の同時使用数がさらに増え、上限を超えてしまうため）。
   //   そのため、軽量なメニュー曲だけを事前ロードし、バトルBGM本編は
@@ -109,9 +207,9 @@ const AssetPreloader = (() => {
     preloadAudio('./menu.mp3');
   }
 
-  // マップ背景画像（map1〜map20.png）の事前ロード
+  // マップ背景画像（map1〜map25.png）の事前ロード
   function preloadMapBackgrounds() {
-    for (let i = 1; i <= 20; i++) preloadImage(`./map${i}.png`);
+    for (let i = 1; i <= 25; i++) preloadImage(`./map${i}.png`);
   }
 
   function preloadAll() {
@@ -125,10 +223,10 @@ const AssetPreloader = (() => {
   return { preloadImage, preloadAudio, preloadAll, audioBuffers };
 })();
 
-// バトル開始のたびに、map1〜map20.png からランダムで1枚を背景に設定する
+// バトル開始のたびに、map1〜map25.png からランダムで1枚を背景に設定する
 // （NPC戦・対人戦どちらでも共通。画像は事前ロード済みなのですぐ表示される）
 function setRandomBattleBackground() {
-  const n = 1 + Math.floor(Math.random() * 20);
+  const n = 1 + Math.floor(Math.random() * 25);
   const el = $('battle-field-bg');
   if (el) el.style.backgroundImage = `url("./map${n}.png")`;
 }
@@ -219,7 +317,7 @@ const BATTLE_BGM_NAMES = {
   2: 'ポケリエ-さすらいクロネコ戦',
   3: 'パズドラX-ボスバトル',
   4: '妖怪ウォッチ2-和風な妖怪',
-  5: '妖怪ウォッチ-強い妖怪',
+  5: 'ぷよぷよフィーバー-へっぽこ魔王最強伝説',
   6: '大乱闘スマッシュブラザーズX-メタナイトの逆襲(アレンジ)',
   7: '妖怪ウォッチバスターズ-ぬらりひょん',
   8: '妖怪ウォッチバスターズ-大妖魔ぬらねいら',
@@ -227,16 +325,22 @@ const BATTLE_BGM_NAMES = {
   10: 'ポケリエ-リュウガン戦',
   11: 'ポケモン-決勝！WCS',
   12: 'ポケモン-戦闘！グラジオ(アレンジ)',
-  13: 'ポケモン-戦闘！ウォロ(アレンジ)',
+  13: 'メタルギア-Encounter(アレンジ)',
   14: 'モンスターハンター-ディノバルド',
   15: 'ポケモン-バトルタワー(剣盾)',
   16: 'ブルーアーカイブ-Cherry Merry Berry',
   17: 'ポケモン-戦闘！ソルガレオ・ルナアーラ(アレンジ)',
   18: 'メタルギアシリーズより',
   19: 'ポケモン-戦闘！パルデア四天王！(アレンジ)',
-  20: '妖怪ウォッチ-VS妖怪',
+  20: 'みらくらぱーく！-ド！ド！ド！',
+  21: 'Blue Archive-Youre My Princess',
+  22: 'モンスターハンター-バルファルク',
+  23: 'バイオハザードリベレーションズ-Ride On The Sea',
+  24: 'ポケモンZA-カラスバ戦',
+  25: 'ポケリエ-「???戦」',
 };
 function battleBgmLogLabel(n) {
+  if (n === 'BOSS') return 'ポケリエバトルファクトリー - 決闘!!';
   const num = String(n).padStart(2, '0');
   const name = BATTLE_BGM_NAMES[n] || '';
   return `BGM${num}「${name}」`;
@@ -247,16 +351,18 @@ const BattleBgm = (() => {
   let currentTrackNum = null;
 
   function pickTrackPath() {
-    const n = rand(1, 20);
+    const n = rand(1, 25);
     currentTrackNum = n;
     return `./${n}.mp3`;
   }
 
-  function start() {
+  // isBoss=true の場合はボス専用BGM（BOSS.mp3）を固定で流す
+  function start(isBoss) {
     MenuBgm.stop();
     stop();
-    const path = pickTrackPath();
-    // BGM候補20曲は事前プリロードしていない（iOSのAudio要素数上限対策のため）。
+    const path = isBoss ? './BOSS.mp3' : pickTrackPath();
+    if (isBoss) currentTrackNum = 'BOSS';
+    // BGM候補25曲は事前プリロードしていない（iOSのAudio要素数上限対策のため）。
     // 実際に再生する1曲だけをここでロードする。
     const audio = new Audio(path);
     audio.preload = 'auto';
@@ -415,6 +521,7 @@ function showScreen(name) {
   $('screen-' + name).classList.add('active');
   state.screen = name;
   checkOrientation();
+  if (name === 'title') refreshTitleNameLabel();
 }
 
 /* ---------------- Sprite helpers ---------------- */
@@ -549,7 +656,7 @@ function pushLogLine(text) {
   const stack = $('battle-log-stack');
   const el = document.createElement('div');
   el.className = 'battle-log-line';
-  el.textContent = text;
+  el.innerHTML = text;
   stack.appendChild(el);
   logLines.push(el);
   while (logLines.length > LOG_STACK_MAX) {
@@ -1537,7 +1644,7 @@ function partyListItemHtml(p, idx) {
         <div class="pli-hpbar-outer"><div class="pli-hpbar-inner" style="width:${ratio * 100}%; background:${hpBarColor(ratio)};"></div></div>
         <div class="pli-hp-text">${p.currentHp}/${p.maxHp}</div>
         ${isActive ? '<div class="pli-active-tag">たたかっている</div>' : statusTag}
-        <div class="pli-hp-text" style="font-size:8.5px;color:var(--accent-b);">スタック: ${p.energyStacks || 0}</div>
+        <div class="pli-hp-text" style="font-size:8.5px;color:var(--accent-b);"><img src="./energy.png" class="inline-stat-icon" onerror="this.style.visibility='hidden'">: ${p.energyStacks || 0}</div>
       </div>
     </button>
   `;
@@ -2038,12 +2145,14 @@ async function resolvePendingSwitchOuts() {
       const outgoing = state.cpuActive;
       const next = state.cpuTeam.find((p) => p !== outgoing && !p.fainted);
       if (next) {
-        applyBatonPass(outgoing, next);
         queueMessage(`相手は${outgoing.species.name}をひっこめた！`);
         await drainMessages();
         queueMessage(`相手は${next.species.name}をくり出した！`);
         await drainMessages();
         await doSwitch(next, 'cpu');
+        // doSwitch内でランク・混乱状態がリセットされるため、バトンタッチの引き継ぎは
+        // doSwitchの「後」に適用する（先に適用するとdoSwitchのリセットで消えてしまうバグを修正）。
+        applyBatonPass(outgoing, next);
       }
     }
   }
@@ -2058,8 +2167,10 @@ async function resolvePendingSwitchOuts() {
       await drainMessages();
       const idx = await waitForForcedSwitch();
       const next = state.playerTeam[idx];
-      applyBatonPass(outgoing, next);
       await doSwitch(next, 'player');
+      // doSwitch内でランク・混乱状態がリセットされるため、バトンタッチの引き継ぎは
+      // doSwitchの「後」に適用する（先に適用するとdoSwitchのリセットで消えてしまうバグを修正）。
+      applyBatonPass(outgoing, next);
       queueMessage(`ゆけっ！${next.species.name}！`);
       await drainMessages();
     }
@@ -2084,12 +2195,14 @@ async function resolveImmediateSwitch(side) {
     if (!hasAliveBackup(state.cpuTeam, outgoing)) return null;
     const next = state.cpuTeam.find((p) => p !== outgoing && !p.fainted);
     if (!next) return null;
-    applyBatonPass(outgoing, next);
     queueMessage(`相手は${outgoing.species.name}をひっこめた！`);
     await drainMessages();
     queueMessage(`相手は${next.species.name}をくり出した！`);
     await drainMessages();
     await doSwitch(next, 'cpu');
+    // doSwitch内でランク・混乱状態がリセットされるため、バトンタッチの引き継ぎは
+    // doSwitchの「後」に適用する（先に適用するとdoSwitchのリセットで消えてしまうバグを修正）。
+    applyBatonPass(outgoing, next);
     return next;
   } else {
     const outgoing = state.playerActive;
@@ -2103,8 +2216,10 @@ async function resolveImmediateSwitch(side) {
     await drainMessages();
     const idx = await waitForForcedSwitch();
     const next = state.playerTeam[idx];
-    applyBatonPass(outgoing, next);
     await doSwitch(next, 'player');
+    // doSwitch内でランク・混乱状態がリセットされるため、バトンタッチの引き継ぎは
+    // doSwitchの「後」に適用する（先に適用するとdoSwitchのリセットで消えてしまうバグを修正）。
+    applyBatonPass(outgoing, next);
     queueMessage(`ゆけっ！${next.species.name}！`);
     await drainMessages();
     return next;
@@ -2115,7 +2230,7 @@ async function runBattleLoop() {
   state.battleBusy = true;
   battleLogHistory = [];
   clearWeatherFxLayer();
-  const bgmNum = BattleBgm.start();
+  const bgmNum = BattleBgm.start(state.isBossBattle);
   pushLogLine(battleBgmLogLabel(bgmNum));
   state.playerActive.side = 'player';
   state.cpuActive.side = 'cpu';
@@ -2278,6 +2393,7 @@ function tradeCardHtml(p, idx, disabled) {
   return `
     <div class="trade-poke-card ${disabled ? 'disabled' : ''}" data-idx="${idx}">
       <button class="tpc-info-btn" data-info-idx="${idx}" type="button"><span>!</span></button>
+      ${pokedexNewBadgeHtml(p.speciesId)}
       <img src="${spritePath(p)}" alt="${p.species.name}" class="tpc-sprite"
            onerror="this.replaceWith(makeTeamCardFallback(${p.speciesId}))">
       <div class="tpc-name">${p.species.name}</div>
@@ -2301,20 +2417,24 @@ function runTradeSequence() {
   return new Promise((resolve) => {
     const offerOverlay = $('trade-overlay');
     const offerRow = $('trade-offer-row');
-    offerRow.innerHTML = state.cpuTeam.map((p, idx) => tradeCardHtml(p, idx, false)).join('');
+    // ボス戦の場合、ボス専用ポケモン（BOSS_SPECIES_ID）はもらえないようにする
+    const offerable = state.isBossBattle
+      ? state.cpuTeam.filter((p) => p.speciesId !== BOSS_SPECIES_ID)
+      : state.cpuTeam;
+    offerRow.innerHTML = offerable.map((p, idx) => tradeCardHtml(p, idx, false)).join('');
     offerOverlay.classList.add('show');
 
     const onOfferClick = async (e) => {
       const infoBtn = e.target.closest('.tpc-info-btn');
       if (infoBtn) {
         const idx = parseInt(infoBtn.dataset.infoIdx, 10);
-        showTradeDetail(state.cpuTeam[idx]);
+        showTradeDetail(offerable[idx]);
         return;
       }
       const card = e.target.closest('.trade-poke-card');
       if (!card) return;
       const offerIdx = parseInt(card.dataset.idx, 10);
-      const chosen = state.cpuTeam[offerIdx];
+      const chosen = offerable[offerIdx];
       const ok = await askConfirm(`${chosen.species.name}をもらいますか？`);
       if (!ok) return;
       offerRow.removeEventListener('click', onOfferClick);
@@ -2392,13 +2512,34 @@ function resetPokeForBattle(poke) {
   poke.gekirinMoveId = null;
 }
 
+// 次のバトルが「10連勝目」にあたるボス戦かどうかを判定する。
+// 例：9連勝中に次で勝てば10連勝目＝ボス戦。9連勝中に負けて連勝が0に戻った場合は
+// 次の1勝目はボス戦にはならない（あくまで「連勝数」で判定するため）。
+function isNextBattleBoss() {
+  return state.winStreak > 0 && state.winStreak % 10 === 0;
+}
+
 function startNextCpuBattle() {
-  state.cpuTeam = drawRandomTeam(3);
+  const bossBattle = isNextBattleBoss();
+  state.isBossBattle = bossBattle;
+  if (bossBattle) {
+    const randomTwo = drawRandomTeam(2);
+    const bossPoke = createRandomPokemon(BOSS_SPECIES_ID, 100);
+    state.cpuTeam = [...randomTwo, bossPoke];
+  } else {
+    state.cpuTeam = drawRandomTeam(3);
+  }
   state.cpuTeam.forEach(resetPokeForBattle);
   state.playerTeam.forEach(resetPokeForBattle);
   state.playerActive = state.playerTeam.find((p) => !p.fainted) || state.playerTeam[0];
   state.cpuActive = state.cpuTeam[0];
-  setRandomBattleBackground();
+  Pokedex.registerTeam(state.playerTeam);
+  if (bossBattle) {
+    const el = $('battle-field-bg');
+    if (el) el.style.backgroundImage = `url("./mapboss.png")`;
+  } else {
+    setRandomBattleBackground();
+  }
   showScreen('battle');
   msgQueue = [];
   runBattleLoop();
@@ -2443,6 +2584,7 @@ function pickCardHtml(poke, idx) {
     <div class="trade-poke-card ${orderPos >= 0 ? 'selected' : ''}" data-idx="${idx}">
       <button class="tpc-info-btn" data-info-idx="${idx}" type="button"><span>!</span></button>
       ${orderPos >= 0 ? `<span class="pick-order-badge">${orderLabel}</span>` : ''}
+      ${pokedexNewBadgeHtml(poke.speciesId)}
       <img src="${spritePath(poke)}" alt="${poke.species.name}" class="tpc-sprite"
            onerror="this.replaceWith(makeTeamCardFallback(${poke.speciesId}))">
       <div class="tpc-name">${poke.species.name}</div>
@@ -2572,10 +2714,10 @@ $('team-cards').addEventListener('click', (e) => {
   renderReorderCards();
 });
 
-function startNewRun() {
+function startNewRun(initialWinStreak) {
   MenuBgm.start();
   state.multiplayer = false;
-  state.winStreak = 0;
+  state.winStreak = initialWinStreak || 0;
   showInitialPickOverlay();
 }
 
@@ -2590,12 +2732,6 @@ function generateRoomId() {
 function showMultiplayerMenu() {
   MenuBgm.start();
   showScreen('multiplayer');
-}
-
-/* 名前入力を廃止したため、表示用のプレイヤー名は自動生成する */
-function generateAutoPlayerName() {
-  const n = 1000 + Math.floor(Math.random() * 9000);
-  return `トレーナー${n}`;
 }
 
 function updateNameCharCount() {
@@ -2622,7 +2758,7 @@ function closeNameModal() {
 function onNameModalConfirm() {
   const code = ($('input-room-code').value || '').trim();
   if (!/^\d{4}$/.test(code)) { $('input-room-code').focus(); return; }
-  if (!state.playerName) state.playerName = generateAutoPlayerName();
+  if (!state.playerName) state.playerName = PlayerProfile.get();
   closeNameModal();
   joinRoom(code);
 }
@@ -2869,6 +3005,7 @@ function negoCardHtml(p, idx) {
   return `
     <div class="trade-poke-card" data-idx="${idx}">
       <button class="tpc-info-btn" data-info-idx="${idx}" type="button"><span>!</span></button>
+      ${pokedexNewBadgeHtml(p.speciesId)}
       <img src="${spritePath(p)}" alt="${p.species.name}" class="tpc-sprite"
            onerror="this.replaceWith(makeTeamCardFallback(${p.speciesId}))">
       <div class="tpc-name">${p.species.name}</div>
@@ -3122,6 +3259,7 @@ async function onMultiplayerPickConfirm() {
   await runNegotiatePhase();
 
   await Net.sendTeam(state.playerTeam);
+  Pokedex.registerTeam(state.playerTeam);
 
   // バトル画面へ移動して待機
   setRandomBattleBackground();
@@ -3161,7 +3299,8 @@ async function onMultiplayerPickConfirm() {
     $('battle-log-stack').innerHTML = '';
     logLines = [];
 
-    const bgmNum = BattleBgm.start();
+    state.isBossBattle = false;
+    const bgmNum = BattleBgm.start(false);
     pushLogLine(battleBgmLogLabel(bgmNum));
 
     if (state.isHost) {
@@ -3339,12 +3478,14 @@ async function resolveImmediateSwitchMultiplayer(side) {
     const idx = raw && typeof raw.idx === 'number' ? raw.idx : 0;
     const next = state.cpuTeam[idx] || state.cpuTeam.find((p) => p !== outgoing && !p.fainted);
     if (!next) return null;
-    applyBatonPass(outgoing, next);
     queueMessage(`相手は${outgoing.species.name}をひっこめた！`);
     await drainMessages();
     queueMessage(`相手は${next.species.name}をくり出した！`);
     await drainMessages();
     await doSwitch(next, 'cpu');
+    // doSwitch内でランク・混乱状態がリセットされるため、バトンタッチの引き継ぎは
+    // doSwitchの「後」に適用する（先に適用するとdoSwitchのリセットで消えてしまうバグを修正）。
+    applyBatonPass(outgoing, next);
     return next;
   } else {
     const outgoing = state.playerActive;
@@ -3358,8 +3499,10 @@ async function resolveImmediateSwitchMultiplayer(side) {
     await drainMessages();
     const idx = await waitForForcedSwitch();
     const next = state.playerTeam[idx];
-    applyBatonPass(outgoing, next);
     await doSwitch(next, 'player');
+    // doSwitch内でランク・混乱状態がリセットされるため、バトンタッチの引き継ぎは
+    // doSwitchの「後」に適用する（先に適用するとdoSwitchのリセットで消えてしまうバグを修正）。
+    applyBatonPass(outgoing, next);
     queueMessage(`ゆけっ！${next.species.name}！`);
     await drainMessages();
     return next;
@@ -3821,9 +3964,175 @@ $('btn-npc-battle').addEventListener('click', () => { startMenuBgmOnFirstInterac
 $('btn-player-battle').addEventListener('click', () => { startMenuBgmOnFirstInteraction(); showMultiplayerMenu(); });
 $('btn-to-battle').addEventListener('click', () => { startNextCpuBattle(); });
 
+/* ---- ホーム画面：自分の名前変更 ---- */
+function refreshTitleNameLabel() {
+  const el = $('title-name-label');
+  if (el) el.textContent = state.playerName || PlayerProfile.get();
+}
+refreshTitleNameLabel();
+
+function updateProfileNameCharCount() {
+  const len = ($('input-profile-name').value || '').length;
+  $('profile-name-char-count').textContent = len;
+}
+
+function openProfileNameModal() {
+  startMenuBgmOnFirstInteraction();
+  $('input-profile-name').value = state.playerName || PlayerProfile.get();
+  updateProfileNameCharCount();
+  $('profile-name-modal').classList.add('show');
+  setTimeout(() => {
+    try { $('input-profile-name').focus(); $('input-profile-name').select(); } catch (e) {}
+  }, 60);
+}
+
+function closeProfileNameModal() {
+  $('profile-name-modal').classList.remove('show');
+}
+
+function confirmProfileNameModal() {
+  const newName = PlayerProfile.set($('input-profile-name').value);
+  state.playerName = newName;
+  refreshTitleNameLabel();
+  closeProfileNameModal();
+}
+
+$('btn-title-name').addEventListener('click', openProfileNameModal);
+$('profile-name-cancel').addEventListener('click', closeProfileNameModal);
+$('profile-name-confirm').addEventListener('click', confirmProfileNameModal);
+$('input-profile-name').addEventListener('input', updateProfileNameCharCount);
+$('input-profile-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') confirmProfileNameModal();
+});
+
+/* ---- デバッグ用オプション（ホーム画面右上の⚙️） ---- */
+// 特定のIDを入力すると、NPC連勝モードをボス戦直前（9連勝中）の状態から
+// 開始できるようにする。バグチェック用の裏機能。
+const DEBUG_BOSS_SKIP_ID = 'sayakadaisuki';
+$('btn-title-settings').addEventListener('click', () => {
+  $('settings-id-input').value = '';
+  $('settings-overlay').classList.add('show');
+});
+$('settings-cancel-btn').addEventListener('click', () => {
+  $('settings-overlay').classList.remove('show');
+});
+$('settings-id-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('settings-confirm-btn').click();
+});
+$('settings-confirm-btn').addEventListener('click', () => {
+  const value = $('settings-id-input').value.trim();
+  $('settings-overlay').classList.remove('show');
+  if (value === DEBUG_BOSS_SKIP_ID) {
+    startMenuBgmOnFirstInteraction();
+    startNewRun(9); // 9連勝中の状態から開始 → 次に勝てば10連勝目でボス戦
+  }
+});
+
+/* ---- 図鑑（📖）：ホーム画面右上の⚙️の左から開く ---- */
+function pokedexEntryIds() {
+  // 選出プールと同じ「最終進化系 or 進化しないポケモン」のみをID順で並べる
+  return getFinalSpeciesIds().slice().sort((a, b) => a - b);
+}
+
+function pokedexCellHtml(speciesId, displayNo) {
+  const sp = GAME_DATA.species[speciesId];
+  const name = sp ? sp.name : `？？？(${speciesId})`;
+  const found = Pokedex.has(speciesId);
+  const imgSrc = found ? `./${speciesId}.png` : './secret.png';
+  const displayName = found ? name : '？？？';
+  return `<div class="pokedex-cell${found ? '' : ' locked'}" data-species-id="${speciesId}" data-display-no="${displayNo}">
+    <div class="pokedex-cell-imgwrap">
+      <img src="${imgSrc}" alt="" onerror="this.style.visibility='hidden'">
+    </div>
+    <div class="pokedex-cell-no">No.${displayNo}</div>
+    <div class="pokedex-cell-name">${displayName}</div>
+  </div>`;
+}
+
+function renderPokedex() {
+  const ids = pokedexEntryIds();
+  const foundCount = ids.filter((id) => Pokedex.has(id)).length;
+  $('pokedex-count').textContent = `見つけたポケモンの数 ${foundCount}/${ids.length}`;
+  $('pokedex-grid').innerHTML = ids.map((id, i) => pokedexCellHtml(id, i + 1)).join('');
+}
+
+$('btn-title-pokedex').addEventListener('click', () => {
+  renderPokedex();
+  $('pokedex-overlay').classList.add('show');
+});
+$('pokedex-close-btn').addEventListener('click', () => {
+  $('pokedex-overlay').classList.remove('show');
+});
+
+/* ---- 図鑑：発見済みポケモンの詳細（種族値ランク表示） ---- */
+// 種族値 → ランク文字（135以上:S, 110以上:A, 90以上:B, 70以上:C, 45以上:D, それ未満:E）
+function baseStatRank(value) {
+  if (value >= 135) return 'S';
+  if (value >= 110) return 'A';
+  if (value >= 90) return 'B';
+  if (value >= 70) return 'C';
+  if (value >= 45) return 'D';
+  return 'E';
+}
+
+const POKEDEX_STAT_LABELS = [
+  ['hp', 'HP'], ['atk', 'こうげき'], ['def', 'ぼうぎょ'],
+  ['spa', 'とくこう'], ['spd', 'とくぼう'], ['spe', 'すばやさ'],
+];
+
+function pokedexAbilitiesHtml(species) {
+  const ids = (species.abilities || []).filter((id) => id !== undefined && id !== null && id !== 0);
+  if (ids.length === 0) return `<div class="pdx-ability-row"><div class="pdx-ability-name">なし</div></div>`;
+  // 同じ特性が重複している場合はまとめて表示する
+  const uniqueIds = [...new Set(ids)];
+  return uniqueIds.map((id) => {
+    const desc = abilityDescById(id);
+    return `<div class="pdx-ability-row">
+      <div class="pdx-ability-name">${abilityJp(id)}</div>
+      ${desc ? `<div class="pdx-ability-desc">${desc}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function pokedexStatsHtml(species) {
+  const base = species.baseStats;
+  return POKEDEX_STAT_LABELS.map(([key, label]) => {
+    const value = base[key];
+    const rank = baseStatRank(value);
+    return `<div class="pdx-stat-row">
+      <span>${label}</span>
+      <span class="pdx-stat-rank pdx-rank-${rank}">${rank}</span>
+    </div>`;
+  }).join('');
+}
+
+function showPokedexDetail(speciesId, displayNo) {
+  const sp = GAME_DATA.species[speciesId];
+  if (!sp) return;
+  $('pdx-detail-img').src = `./${speciesId}.png`;
+  $('pdx-detail-no').textContent = `No.${displayNo}`;
+  $('pdx-detail-name').textContent = sp.name;
+  const types = [sp.type1, sp.type2].filter(Boolean);
+  $('pdx-detail-types').innerHTML = types.map((t) => typeChipHtml(t)).join('');
+  $('pdx-detail-abilities').innerHTML = pokedexAbilitiesHtml(sp);
+  $('pdx-detail-stats').innerHTML = pokedexStatsHtml(sp);
+  $('pokedex-detail-overlay').classList.add('show');
+}
+
+$('pokedex-grid').addEventListener('click', (e) => {
+  const cell = e.target.closest('.pokedex-cell');
+  if (!cell || cell.classList.contains('locked')) return;
+  const speciesId = parseInt(cell.dataset.speciesId, 10);
+  const displayNo = parseInt(cell.dataset.displayNo, 10);
+  showPokedexDetail(speciesId, displayNo);
+});
+$('pokedex-detail-close').addEventListener('click', () => {
+  $('pokedex-detail-overlay').classList.remove('show');
+});
+
 $('btn-create-room').addEventListener('click', () => {
   // 名前入力なしで即ルーム作成
-  if (!state.playerName) state.playerName = generateAutoPlayerName();
+  if (!state.playerName) state.playerName = PlayerProfile.get();
   startHostRoom();
 });
 $('btn-join-room').addEventListener('click', () => openNameModal());
@@ -3857,7 +4166,7 @@ AssetPreloader.preloadAll();
 // ---- iOS Safari 対策 ----
 // iOSのSafari/WebViewは「その<audio>要素自身に対して、ユーザー操作のコールスタック内で
 // 一度 play() を呼んだこと」がある要素しか、以後スクリプトからの再生を許可しない。
-// MenuBgm用の1個だけ再生しても、クリック音・バトル効果音・バトルBGM(20曲)用に
+// MenuBgm用の1個だけ再生しても、クリック音・バトル効果音・バトルBGM(25曲)用に
 // 別途生成してある大量のAudioインスタンスはロックされたままになり、
 // 「BGMは鳴るのに効果音や対戦中の曲だけ鳴らない」または「何も鳴らない」という
 // iPhoneでの不具合の主な原因になる。そこで最初のユーザー操作のタイミングで、
