@@ -452,12 +452,27 @@ html,body{
 .ready-slot{
   display: flex; align-items: center; gap: 12px;
   width: 100%;
-  padding: 12px 16px;
+  padding: 14px 18px;
+  min-height: 60px;
   border-radius: var(--radius-md);
   background: var(--surface-deep);
   box-shadow: var(--shadow-inset-sm);
   transition: box-shadow .2s ease;
 }
+.ready-slot-favicon{
+  flex: 0 0 auto;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-light-sm);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.ready-slot-favicon img{
+  width: 100%; height: 100%;
+  object-fit: contain;
+}
+.ready-slot-favicon.is-hidden{ display: none; }
 .ready-slot.is-ready{
   box-shadow: var(--shadow-inset-sm), inset 0 0 0 2px var(--accent-hp);
 }
@@ -1905,6 +1920,12 @@ html,body{
 .pokedex-cell-no{ font-size:8.5px; font-weight:800; color:var(--ink-soft); }
 .pokedex-cell-name{ font-size:10.5px; font-weight:800; color:var(--ink); text-align:center; line-height:1.2; margin-top:1px; }
 .pokedex-cell.locked .pokedex-cell-name{ color:var(--ink-soft); }
+.pokedex-cell-shiny-mark{
+  position:absolute; top:-2px; right:-2px;
+  font-size:12px; line-height:1;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.35));
+}
+.pokedex-cell-imgwrap{ position:relative; }
 
 @media (max-height: 420px){
   .pokedex-header{ padding: 8px 12px 6px; }
@@ -1953,7 +1974,35 @@ html,body{
 .pdx-imgwrap img{ width:46px; height:46px; object-fit:contain; image-rendering:pixelated; }
 .pdx-header-text{ min-width:0; }
 .pdx-no{ font-size:10.5px; font-weight:800; color:var(--ink-soft); }
-.pdx-name{ font-size:16px; font-weight:900; color:var(--ink); margin:1px 0 5px; }
+.pdx-name-row{ display:flex; align-items:center; gap:6px; margin:1px 0 5px; }
+.pdx-name{ font-size:16px; font-weight:900; color:var(--ink); margin:0; }
+.pdx-shiny-toggle-btn{
+  flex-shrink:0;
+  width:24px; height:24px; border-radius:50%;
+  border:none; background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  font-size:13px;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; line-height:1;
+  opacity:0.45; filter: grayscale(1);
+  transition: opacity .15s ease, filter .15s ease, transform .1s ease;
+}
+.pdx-shiny-toggle-btn.active{ opacity:1; filter:none; background: var(--surface); box-shadow: var(--shadow-light-sm); }
+.pdx-shiny-toggle-btn:active{ transform: scale(0.92); }
+.pdx-favorite-btn{
+  flex-shrink:0;
+  width:24px; height:24px; border-radius:50%;
+  border:none; background: var(--surface-deep);
+  box-shadow: var(--shadow-inset-sm);
+  font-size:13px;
+  color: var(--ink-soft);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; line-height:1;
+  opacity:0.45;
+  transition: opacity .15s ease, color .15s ease, transform .1s ease;
+}
+.pdx-favorite-btn.active{ opacity:1; color:#f5b83d; background: var(--surface); box-shadow: var(--shadow-light-sm); }
+.pdx-favorite-btn:active{ transform: scale(0.92); }
 .pdx-types{ display:flex; gap:5px; flex-wrap:wrap; }
 .pdx-body{
   flex:1; min-height:0;
@@ -2147,11 +2196,13 @@ html,body{
       <div class="ready-room-slots">
         <div class="ready-slot" id="ready-slot-1">
           <span class="ready-slot-num">1</span>
+          <span class="ready-slot-favicon is-hidden" id="ready-slot-1-favicon"><img src="" alt=""></span>
           <span class="ready-slot-name" id="ready-slot-1-name">-</span>
           <span class="ready-slot-badge" id="ready-slot-1-badge">未準備</span>
         </div>
         <div class="ready-slot" id="ready-slot-2">
           <span class="ready-slot-num">2</span>
+          <span class="ready-slot-favicon is-hidden" id="ready-slot-2-favicon"><img src="" alt=""></span>
           <span class="ready-slot-name is-empty" id="ready-slot-2-name">相手を待っています…</span>
           <span class="ready-slot-badge" id="ready-slot-2-badge">未準備</span>
         </div>
@@ -2471,7 +2522,11 @@ html,body{
         <div class="pdx-imgwrap"><img id="pdx-detail-img" src="" alt=""></div>
         <div class="pdx-header-text">
           <div class="pdx-no" id="pdx-detail-no"></div>
-          <div class="pdx-name" id="pdx-detail-name"></div>
+          <div class="pdx-name-row">
+            <div class="pdx-name" id="pdx-detail-name"></div>
+            <button id="pdx-shiny-toggle-btn" class="pdx-shiny-toggle-btn" type="button" aria-label="色違い切替" style="display:none">✨</button>
+            <button id="pdx-favorite-btn" class="pdx-favorite-btn" type="button" aria-label="お気に入り登録">★</button>
+          </div>
           <div class="pdx-types" id="pdx-detail-types"></div>
         </div>
       </div>

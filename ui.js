@@ -112,39 +112,88 @@ const POKEDEX_STORAGE_KEY = 'pokeriere_pokedex_v1';
 
 const Pokedex = (() => {
   let seen = new Set();
+  let seenShiny = new Set(); // 色違いを連れて行ったことがある種族ID
+  let viewShiny = new Set(); // 図鑑で「色違い表示」に切り替えている種族ID（表示状態の記憶）
+  // お気に入り登録（最大1つ）。対人戦のルーム画面で、名前の左に表示するアイコンに使う。
+  // { speciesId, shiny } または null。shiny は登録時点で✨表示になっていたかどうか。
+  let favorite = null;
 
   function load() {
     try {
       const raw = localStorage.getItem(POKEDEX_STORAGE_KEY);
       if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) seen = new Set(arr.map((n) => Number(n)));
+        const data = JSON.parse(raw);
+        if (Array.isArray(data)) {
+          // 旧フォーマット（IDの配列のみ）との後方互換
+          seen = new Set(data.map((n) => Number(n)));
+          seenShiny = new Set();
+          viewShiny = new Set();
+          favorite = null;
+        } else if (data && typeof data === 'object') {
+          seen = new Set((data.seen || []).map((n) => Number(n)));
+          seenShiny = new Set((data.seenShiny || []).map((n) => Number(n)));
+          viewShiny = new Set((data.viewShiny || []).map((n) => Number(n)));
+          favorite = (data.favorite && data.favorite.speciesId !== undefined && data.favorite.speciesId !== null)
+            ? { speciesId: Number(data.favorite.speciesId), shiny: !!data.favorite.shiny }
+            : null;
+        }
       }
-    } catch (e) { seen = new Set(); }
+    } catch (e) { seen = new Set(); seenShiny = new Set(); viewShiny = new Set(); favorite = null; }
   }
 
   function save() {
     try {
-      localStorage.setItem(POKEDEX_STORAGE_KEY, JSON.stringify([...seen]));
+      localStorage.setItem(POKEDEX_STORAGE_KEY, JSON.stringify({
+        seen: [...seen], seenShiny: [...seenShiny], viewShiny: [...viewShiny], favorite,
+      }));
     } catch (e) {}
   }
 
-  // team: state.playerTeam のようなポケモン配列（各要素が speciesId を持つ）
+  // team: state.playerTeam のようなポケモン配列（各要素が speciesId と shiny を持つ）
   function registerTeam(team) {
     if (!Array.isArray(team)) return;
     let changed = false;
     for (const p of team) {
       if (!p || p.speciesId === undefined || p.speciesId === null) continue;
       if (!seen.has(p.speciesId)) { seen.add(p.speciesId); changed = true; }
+      if (p.shiny && !seenShiny.has(p.speciesId)) { seenShiny.add(p.speciesId); changed = true; }
     }
     if (changed) save();
   }
 
   function has(speciesId) { return seen.has(speciesId); }
+  function hasShiny(speciesId) { return seenShiny.has(speciesId); }
   function count() { return seen.size; }
 
+  // 図鑑での表示フォーム（通常/色違い）を切り替える。色違いを連れて行ったことがない
+  // 種族には切り替えボタン自体を出さないため、呼び出し側で hasShiny を確認する想定。
+  function isViewingShiny(speciesId) { return viewShiny.has(speciesId); }
+  function toggleView(speciesId) {
+    if (!hasShiny(speciesId)) return isViewingShiny(speciesId);
+    if (viewShiny.has(speciesId)) viewShiny.delete(speciesId);
+    else viewShiny.add(speciesId);
+    save();
+    return viewShiny.has(speciesId);
+  }
+
+  function getFavorite() { return favorite; }
+  function isFavorite(speciesId) { return !!favorite && favorite.speciesId === speciesId; }
+  // 登録済みポケモンのみお気に入りにできる（見つけていない種族は不可）。
+  // 別のポケモンをお気に入りにすると、前のお気に入りは自動的に消える（最大1つ）。
+  // 同じポケモンを再度押した場合は解除する。
+  function toggleFavorite(speciesId, shiny) {
+    if (!has(speciesId)) return favorite;
+    if (favorite && favorite.speciesId === speciesId) {
+      favorite = null;
+    } else {
+      favorite = { speciesId, shiny: !!shiny };
+    }
+    save();
+    return favorite;
+  }
+
   load();
-  return { registerTeam, has, count };
+  return { registerTeam, has, hasShiny, count, isViewingShiny, toggleView, getFavorite, isFavorite, toggleFavorite };
 })();
 
 // 選出/交換カードに載せる「図鑑未登録」マーク。既存の !ボタン（右上）や
@@ -2790,12 +2839,41 @@ let readyRoomState = { mine: false, opponent: false };
 let readyBattleStarting = false;
 let readyListenersWired = false;
 
+// スロットの名前左に表示するお気に入りポケモンアイコンを更新する。
+// favorite: { speciesId, shiny } または null/undefined。
+function updateReadySlotFavicon(slotNum, favorite) {
+  const wrap = $(`ready-slot-${slotNum}-favicon`);
+  if (!wrap) return;
+  const img = wrap.querySelector('img');
+  if (favorite && favorite.speciesId !== undefined && favorite.speciesId !== null) {
+    img.src = `./${favorite.speciesId}${favorite.shiny ? 's' : ''}.png`;
+    wrap.classList.remove('is-hidden');
+  } else {
+    img.src = '';
+    wrap.classList.add('is-hidden');
+  }
+}
+
+// 自分が現在ルーム内にいる時、図鑑でお気に入りを変更したら
+// 表示中のスロット画像とサーバー上のmetaの両方を更新する。
+function syncMyFavoriteToRoom() {
+  if (!state.roomId) return;
+  const fav = Pokedex.getFavorite();
+  const mySlotNum = state.isHost ? 1 : 2;
+  updateReadySlotFavicon(mySlotNum, fav);
+  Net.updateMyFavorite(fav);
+}
+
 function renderReadyRoom() {
   const meName = state.playerName || '';
   const oppName = state.opponentName || Net.opponentName || '';
+  const myFavorite = Pokedex.getFavorite();
+  const oppFavorite = Net.opponentFavorite || null;
 
   const slot1Name = state.isHost ? meName : oppName;
   const slot2Name = state.isHost ? oppName : meName;
+  const slot1Favorite = state.isHost ? myFavorite : oppFavorite;
+  const slot2Favorite = state.isHost ? oppFavorite : myFavorite;
   const slot1Ready = state.isHost ? readyRoomState.mine : readyRoomState.opponent;
   const slot2Ready = state.isHost ? readyRoomState.opponent : readyRoomState.mine;
 
@@ -2805,6 +2883,9 @@ function renderReadyRoom() {
   nameEl1.classList.toggle('is-empty', !slot1Name);
   nameEl2.textContent = slot2Name || '相手を待っています…';
   nameEl2.classList.toggle('is-empty', !slot2Name);
+
+  updateReadySlotFavicon(1, slot1Name ? slot1Favorite : null);
+  updateReadySlotFavicon(2, slot2Name ? slot2Favorite : null);
 
   $('ready-slot-1').classList.toggle('is-ready', !!slot1Ready);
   $('ready-slot-2').classList.toggle('is-ready', !!slot2Ready);
@@ -2836,6 +2917,10 @@ function wireReadyRoomListeners() {
       setTimeout(() => { startMultiplayerPick(); }, 500);
     }
   });
+
+  Net.onOpponentFavoriteChange(() => {
+    renderReadyRoom();
+  });
 }
 
 async function startHostRoom() {
@@ -2845,9 +2930,10 @@ async function startHostRoom() {
   readyRoomState = { mine: false, opponent: false };
   state.isHost = true;
   let code = null;
+  const myFavorite = Pokedex.getFavorite();
   for (let i = 0; i < 8; i++) {
     const candidate = generateRoomId();
-    const r = await Net.createRoom(candidate, state.playerName);
+    const r = await Net.createRoom(candidate, state.playerName, myFavorite);
     if (r === 'ok') { code = candidate; break; }
   }
   if (!code) {
@@ -2876,7 +2962,7 @@ async function joinRoom(code) {
   readyListenersWired = false;
   readyRoomState = { mine: false, opponent: false };
   state.isHost = false;
-  const r = await Net.joinRoom(code, state.playerName);
+  const r = await Net.joinRoom(code, state.playerName, Pokedex.getFavorite());
   if (r === 'not-found') { alert('そのルームは見つかりませんでした。'); return; }
   if (r === 'full') { alert('そのルームは満員、またはすでに対戦中です。'); return; }
   if (r === 'error') { alert('接続に失敗しました。'); return; }
@@ -4062,11 +4148,14 @@ function pokedexCellHtml(speciesId, displayNo) {
   const sp = GAME_DATA.species[speciesId];
   const name = sp ? sp.name : `？？？(${speciesId})`;
   const found = Pokedex.has(speciesId);
-  const imgSrc = found ? `./${speciesId}.png` : './secret.png';
+  const shinyCaught = Pokedex.hasShiny(speciesId);
+  const showShiny = found && shinyCaught && Pokedex.isViewingShiny(speciesId);
+  const imgSrc = found ? `./${speciesId}${showShiny ? 's' : ''}.png` : './secret.png';
   const displayName = found ? name : '？？？';
   return `<div class="pokedex-cell${found ? '' : ' locked'}" data-species-id="${speciesId}" data-display-no="${displayNo}">
     <div class="pokedex-cell-imgwrap">
       <img src="${imgSrc}" alt="" onerror="this.style.visibility='hidden'">
+      ${shinyCaught ? '<span class="pokedex-cell-shiny-mark">✨</span>' : ''}
     </div>
     <div class="pokedex-cell-no">No.${displayNo}</div>
     <div class="pokedex-cell-name">${displayName}</div>
@@ -4130,16 +4219,38 @@ function pokedexStatsHtml(species) {
   }).join('');
 }
 
+let pdxDetailSpeciesId = null;
+
+function renderPokedexDetailForm(speciesId) {
+  const sp = GAME_DATA.species[speciesId];
+  if (!sp) return;
+  const shinyCaught = Pokedex.hasShiny(speciesId);
+  const showShiny = shinyCaught && Pokedex.isViewingShiny(speciesId);
+  $('pdx-detail-img').src = `./${speciesId}${showShiny ? 's' : ''}.png`;
+  const toggleBtn = $('pdx-shiny-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.style.display = shinyCaught ? '' : 'none';
+    toggleBtn.classList.toggle('active', showShiny);
+  }
+  const favBtn = $('pdx-favorite-btn');
+  if (favBtn) {
+    const fav = Pokedex.getFavorite();
+    const isThisFavorite = !!fav && fav.speciesId === speciesId;
+    favBtn.classList.toggle('active', isThisFavorite);
+  }
+}
+
 function showPokedexDetail(speciesId, displayNo) {
   const sp = GAME_DATA.species[speciesId];
   if (!sp) return;
-  $('pdx-detail-img').src = `./${speciesId}.png`;
+  pdxDetailSpeciesId = speciesId;
   $('pdx-detail-no').textContent = `No.${displayNo}`;
   $('pdx-detail-name').textContent = sp.name;
   const types = [sp.type1, sp.type2].filter(Boolean);
   $('pdx-detail-types').innerHTML = types.map((t) => typeChipHtml(t)).join('');
   $('pdx-detail-abilities').innerHTML = pokedexAbilitiesHtml(sp);
   $('pdx-detail-stats').innerHTML = pokedexStatsHtml(sp);
+  renderPokedexDetailForm(speciesId);
   $('pokedex-detail-overlay').classList.add('show');
 }
 
@@ -4152,6 +4263,22 @@ $('pokedex-grid').addEventListener('click', (e) => {
 });
 $('pokedex-detail-close').addEventListener('click', () => {
   $('pokedex-detail-overlay').classList.remove('show');
+  // 一覧側にも色違い表示の切替結果を反映
+  renderPokedex();
+});
+$('pdx-shiny-toggle-btn').addEventListener('click', () => {
+  if (pdxDetailSpeciesId === null) return;
+  Pokedex.toggleView(pdxDetailSpeciesId);
+  renderPokedexDetailForm(pdxDetailSpeciesId);
+});
+$('pdx-favorite-btn').addEventListener('click', () => {
+  if (pdxDetailSpeciesId === null) return;
+  // ✨がオン（色違い表示中）で登録するなら、お気に入りも色違いとして記録する
+  const shinyNow = Pokedex.hasShiny(pdxDetailSpeciesId) && Pokedex.isViewingShiny(pdxDetailSpeciesId);
+  Pokedex.toggleFavorite(pdxDetailSpeciesId, shinyNow);
+  renderPokedexDetailForm(pdxDetailSpeciesId);
+  // 対人戦のルーム画面がすでに開いている場合に備えて、自分側の表示も更新しておく
+  if (typeof syncMyFavoriteToRoom === 'function') syncMyFavoriteToRoom();
 });
 
 $('btn-create-room').addEventListener('click', () => {
